@@ -61,7 +61,22 @@ app.get("/api/expected/:store", async (req, res) => {
   const store = req.params.store;
   try {
     const r = await fetch(`${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`);
-    const data = await r.json();
+    const rawText = await r.text();
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch (parseErr) {
+      // Route Board sent back something that isn't JSON at all — most
+      // likely means the request never reached our actual endpoint
+      // (a 404/500 HTML page, a redirect, etc). Surface exactly what
+      // came back instead of a generic parse error, so the real cause
+      // is visible instead of having to guess at it.
+      return res.status(502).json({
+        error: "Route Board didn't return valid data for this store.",
+        rawResponseStart: rawText.slice(0, 200),
+        routeBoardStatus: r.status,
+      });
+    }
     if (!r.ok) return res.status(r.status).json(data);
     res.json(data);
   } catch (err) {
@@ -125,6 +140,18 @@ app.get("/api/reports", (req, res) => {
 app.get("/api/reports/:store", (req, res) => {
   const reports = loadReports().filter((r) => r.store === req.params.store);
   res.json({ reports: reports.slice().reverse() });
+});
+
+// Clears reports either for one specific store (test data cleanup) or
+// everything, if store is omitted/"all". Reports otherwise persist
+// forever with no automatic expiration — this is the only way they
+// get removed.
+app.post("/api/clear-reports", (req, res) => {
+  const { store } = req.body;
+  const before = loadReports();
+  const after = store && store !== "all" ? before.filter((r) => r.store !== store) : [];
+  saveReports(after);
+  res.json({ ok: true, removed: before.length - after.length });
 });
 
 app.get("/receiving/:store", (req, res) => {
