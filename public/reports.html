@@ -4,47 +4,54 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hummus Fit — Delivery Accuracy</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0B1220; --card:#141D33; --card-2:#1B2540; --line:rgba(255,255,255,0.10);
-    --ink:#F4F6FB; --dim:#8A93AC; --accent:#3E8BFF; --accent-tint:rgba(62,139,255,0.14);
-    --good:#31C48D; --good-tint:rgba(49,196,141,0.14);
-    --bad:#F0553F; --bad-tint:rgba(240,85,63,0.14);
+    --bg:#FFFFFF; --card:#FFFFFF; --card-2:#F5F7F7; --line:#E7EAEA;
+    --navy:#182B3A; --dim:#6B7A80; --teal:#2BBFAA; --teal-tint:#E5F7F4;
+    --orange:#E8612C; --orange-tint:#FDEBE3;
+    --good:#2BBFAA; --good-tint:#E5F7F4; --bad:#E14B3D; --bad-tint:#FCE7E5;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
-  html,body{background:var(--bg); color:var(--ink); font-family:'Space Grotesk',sans-serif; min-height:100%;}
-  header{ padding:28px 4vw 20px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
-  .eyebrow{ font-family:'JetBrains Mono', monospace; font-size:12px; font-weight:700; letter-spacing:0.18em; text-transform:uppercase; color:var(--accent); margin-bottom:6px; }
-  h1{ font-size:32px; font-weight:700; }
+  html,body{background:var(--bg); color:var(--navy); font-family:'Inter',sans-serif; min-height:100%;}
+  header{
+    padding:24px 4vw 18px; border-bottom:1px solid var(--line); background:var(--card);
+    display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:10px;
+  }
+  .logo-mark{ font-family:'Poppins', sans-serif; font-weight:700; font-size:15px; margin-bottom:10px; }
+  .logo-mark .hummus{ color: var(--teal); }
+  .logo-mark .fit{ color: var(--orange); }
+  .eyebrow{ font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:var(--dim); margin-bottom:4px; }
+  h1{ font-family:'Poppins', sans-serif; font-weight:800; font-size:32px; }
   .refresh-hint{ font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--dim); }
-  main{ padding:28px 4vw 60px; max-width:1100px; margin:0 auto; }
-  .filter-tabs{ display:flex; gap:10px; margin-bottom:24px; flex-wrap:wrap; }
+  main{ padding:24px 4vw 60px; max-width:1100px; margin:0 auto; }
+  .filter-tabs{ display:flex; gap:10px; margin-bottom:22px; flex-wrap:wrap; }
   .filter-tab{
-    font-family:'JetBrains Mono', monospace; font-size:12px; font-weight:700; text-transform:uppercase;
-    background:var(--card-2); color:var(--dim); border:1px solid var(--line); padding:9px 16px;
+    font-family:'JetBrains Mono', monospace; font-size:11.5px; font-weight:700; text-transform:uppercase;
+    background:var(--card); color:var(--dim); border:1px solid var(--line); padding:9px 16px;
     border-radius:999px; cursor:pointer;
   }
-  .filter-tab.active{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  .filter-tab.active{ background:var(--navy); color:#fff; border-color:var(--navy); }
 
   .report-card{
-    background:var(--card); border:1px solid var(--line); border-radius:18px;
-    padding:20px 22px; margin-bottom:14px;
+    background:var(--card); border:1px solid var(--line); border-radius:16px;
+    padding:18px 20px; margin-bottom:12px;
   }
   .report-top{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; flex-wrap:wrap; gap:10px; }
-  .report-store{ font-size:20px; font-weight:700; }
-  .report-meta{ font-family:'JetBrains Mono', monospace; font-size:11.5px; color:var(--dim); margin-top:4px; }
+  .report-store{ font-family:'Poppins', sans-serif; font-weight:700; font-size:19px; }
+  .report-meta{ font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--dim); margin-top:4px; }
   .error-badge{
-    font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700;
+    font-family:'JetBrains Mono', monospace; font-size:12.5px; font-weight:700;
     padding:6px 14px; border-radius:999px;
   }
   .error-badge.good{ background:var(--good-tint); color:var(--good); }
   .error-badge.bad{ background:var(--bad-tint); color:var(--bad); }
   .discrepancy-row{
-    font-size:14px; padding:6px 0; color:var(--ink); display:flex; justify-content:space-between;
+    font-size:13.5px; padding:8px 0; color:var(--navy); display:flex; justify-content:space-between;
+    border-top:1px solid var(--line); flex-wrap:wrap; gap:6px;
   }
   .discrepancy-row .diff-short{ color:var(--bad); font-weight:700; }
-  .discrepancy-row .diff-extra{ color:var(--accent); font-weight:700; }
+  .discrepancy-row .diff-extra{ color:var(--orange); font-weight:700; }
 
   .empty-state{ text-align:center; padding:80px 20px; color:var(--dim); font-family:'JetBrains Mono', monospace; }
 </style>
@@ -53,7 +60,8 @@
 
 <header>
   <div>
-    <div class="eyebrow">Hummus Fit / Receiving</div>
+    <div class="logo-mark"><span class="hummus">Hummus</span> <span class="fit">FIT</span></div>
+    <div class="eyebrow">Receiving</div>
     <h1>Delivery Accuracy</h1>
   </div>
   <div class="refresh-hint" id="lastUpdated"></div>

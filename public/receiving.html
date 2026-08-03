@@ -4,65 +4,96 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <title>Hummus Fit — Receiving Check</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
   :root{
-    --bg:#0B1220;
-    --card:#141D33;
-    --card-2:#1B2540;
-    --line:rgba(255,255,255,0.10);
-    --ink:#F4F6FB;
-    --dim:#8A93AC;
-    --accent:#3E8BFF;
-    --accent-tint:rgba(62,139,255,0.14);
-    --good:#31C48D;
-    --good-tint:rgba(49,196,141,0.14);
-    --bad:#F0553F;
-    --bad-tint:rgba(240,85,63,0.14);
-    --radius:18px;
+    --bg:#FFFFFF;
+    --card:#FFFFFF;
+    --card-2:#F5F7F7;
+    --line:#E7EAEA;
+    --navy:#182B3A;
+    --dim:#6B7A80;
+    --teal:#2BBFAA;
+    --teal-tint:#E5F7F4;
+    --orange:#E8612C;
+    --orange-tint:#FDEBE3;
+    --good:#2BBFAA;
+    --good-tint:#E5F7F4;
+    --bad:#E14B3D;
+    --bad-tint:#FCE7E5;
+    --radius:16px;
   }
   *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
-  html,body{background:var(--bg); color:var(--ink); font-family:'Space Grotesk',sans-serif; min-height:100%;}
+  html,body{background:var(--bg); color:var(--navy); font-family:'Inter',sans-serif; min-height:100%;}
   header{
-    padding: max(20px, env(safe-area-inset-top)) 5vw 18px;
+    padding: max(18px, env(safe-area-inset-top)) 5vw 16px;
     border-bottom: 1px solid var(--line);
+    background: var(--card);
   }
+  .logo-row{ display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+  .logo-mark{
+    font-family:'Poppins', sans-serif; font-weight:700; font-size:15px;
+  }
+  .logo-mark .hummus{ color: var(--teal); }
+  .logo-mark .fit{ color: var(--orange); }
   .eyebrow{
-    font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700;
-    letter-spacing:0.18em; text-transform:uppercase; color:var(--accent); margin-bottom:6px;
+    font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700;
+    letter-spacing:0.14em; text-transform:uppercase; color:var(--dim);
   }
-  h1{ font-size: 26px; font-weight:700; }
+  h1{ font-family:'Poppins', sans-serif; font-weight:800; font-size: 30px; color:var(--navy); margin-top:2px; }
+  .date-order-row{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .info-chip{
+    font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700;
+    background:var(--card-2); border:1px solid var(--line); color:var(--navy);
+    padding:6px 13px; border-radius:999px;
+  }
+  .info-chip.order{ background:var(--orange-tint); border-color:rgba(232,97,44,0.3); color:var(--orange); }
+
   main{ padding: 20px 5vw 40px; max-width:640px; margin:0 auto; }
+
+  .picked-by-note{
+    font-family:'JetBrains Mono', monospace; font-size:11.5px; color:var(--dim);
+    margin-bottom:16px;
+  }
 
   .expected-card{
     background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
-    padding:18px; margin-bottom:14px;
+    padding:8px 16px; margin-bottom:14px;
   }
   .item-row{
-    display:flex; justify-content:space-between; align-items:center;
+    display:flex; align-items:center; gap:12px;
     padding:12px 0; border-top:1px solid var(--line);
   }
   .item-row:first-child{ border-top:none; }
-  .item-title{ font-weight:600; font-size:14.5px; }
+  .item-thumb{
+    width:48px; height:48px; border-radius:10px; object-fit:cover;
+    background:var(--card-2); flex-shrink:0; border:1px solid var(--line);
+  }
+  .item-thumb.placeholder{
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; color:var(--dim);
+  }
+  .item-title{ font-weight:600; font-size:14px; flex:1; }
   .item-count{
-    font-family:'JetBrains Mono', monospace; font-weight:700; font-size:14px;
+    font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13.5px;
     padding:5px 12px; border-radius:999px; background:var(--card-2); color:var(--dim);
+    flex-shrink:0;
   }
   .item-count.complete{ background:var(--good-tint); color:var(--good); }
-  .item-count.scanning{ background:var(--accent-tint); color:var(--accent); }
+  .item-count.scanning{ background:var(--orange-tint); color:var(--orange); }
 
   .scan-btn{
-    width:100%; background:var(--accent); color:#fff; border:none;
-    font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:17px;
-    padding:18px; border-radius:16px; margin-top:20px; cursor:pointer;
+    width:100%; background:var(--navy); color:#fff; border:none;
+    font-family:'Poppins',sans-serif; font-weight:700; font-size:16px;
+    padding:17px; border-radius:999px; margin-top:20px; cursor:pointer;
   }
   .scan-btn:active{ opacity:0.85; }
 
   .finish-btn{
-    width:100%; background:var(--good); color:#0B1220; border:none;
-    font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:16px;
-    padding:16px; border-radius:16px; margin-top:14px; cursor:pointer;
+    width:100%; background:var(--orange); color:#fff; border:none;
+    font-family:'Poppins',sans-serif; font-weight:700; font-size:15px;
+    padding:15px; border-radius:999px; margin-top:12px; cursor:pointer;
   }
   .finish-btn:disabled{ opacity:0.4; }
 
@@ -88,10 +119,14 @@
     font-family:'JetBrains Mono', monospace; font-size:13px; line-height:1.8;
   }
   .error-state{ color:var(--bad); }
+  .error-detail{
+    margin-top:16px; text-align:left; background:var(--card); border:1px solid var(--bad);
+    border-radius:12px; padding:14px; font-size:11px; word-break:break-word; color:var(--navy);
+  }
 
   .result-banner{
     border-radius:var(--radius); padding:24px; text-align:center; margin-bottom:16px;
-    font-weight:700; font-size:17px;
+    font-family:'Poppins',sans-serif; font-weight:700; font-size:16px;
   }
   .result-banner.good{ background:var(--good-tint); color:var(--good); }
   .result-banner.bad{ background:var(--bad-tint); color:var(--bad); }
@@ -100,8 +135,12 @@
 <body>
 
 <header>
-  <div class="eyebrow">Hummus Fit / Receiving</div>
+  <div class="logo-row">
+    <span class="logo-mark"><span class="hummus">Hummus</span> <span class="fit">FIT</span></span>
+  </div>
+  <div class="eyebrow">Receiving Check</div>
   <h1 id="storeName">Loading…</h1>
+  <div class="date-order-row" id="dateOrderRow"></div>
 </header>
 
 <main id="mainContent">
@@ -122,40 +161,57 @@
   var storeName = decodeURIComponent(location.pathname.split('/receiving/')[1] || '');
   document.getElementById('storeName').textContent = storeName || 'Unknown Store';
 
+  var todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'America/New_York' });
+
   var expected = null;
-  var scannedCounts = {}; // keyed by sku (or title if no sku)
+  var scannedCounts = {};
   var html5QrCode = null;
-  var scanningActive = false;
   var lastScanTime = 0;
   var lastScanCode = null;
 
   function itemKey(item){ return item.sku || item.title; }
+  function escapeHtml(s){
+    return (s==null?'':String(s)).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
+  }
 
   function loadExpected(){
     fetch('/api/expected/' + encodeURIComponent(storeName))
       .then(function(r){ return r.json().then(function(data){ return { ok: r.ok, data: data }; }); })
       .then(function(result){
         var main = document.getElementById('mainContent');
+        var dateRow = document.getElementById('dateOrderRow');
+        dateRow.innerHTML = '<span class="info-chip">' + todayStr + '</span>';
+
         if(!result.ok){
-          main.innerHTML = '<div class="error-state">' + (result.data.error || 'No delivery found for this store yet today.') + '</div>';
+          var detail = '';
+          if(result.data.rawResponseStart){
+            detail = '<div class="error-detail">Route Board sent back: ' + escapeHtml(result.data.rawResponseStart) + '</div>';
+          }
+          main.innerHTML = '<div class="error-state">' + escapeHtml(result.data.error || 'No delivery found for this store yet today.') + detail + '</div>';
           return;
         }
         expected = result.data;
+        dateRow.innerHTML += '<span class="info-chip order">Order' + (expected.orderName && expected.orderName.indexOf(',') !== -1 ? 's' : '') + ': ' + escapeHtml(expected.orderName || '—') + '</span>';
         render();
       })
       .catch(function(err){
-        document.getElementById('mainContent').innerHTML = '<div class="error-state">Could not reach the server: ' + err.message + '</div>';
+        document.getElementById('mainContent').innerHTML = '<div class="error-state">Could not reach the server: ' + escapeHtml(err.message) + '</div>';
       });
   }
 
   function render(){
     var main = document.getElementById('mainContent');
-    var html = '<div class="expected-card">';
+    var html = '<div class="picked-by-note">Picked by ' + escapeHtml(expected.pickedBy || 'Unknown') + '</div>';
+    html += '<div class="expected-card">';
     expected.items.forEach(function(item){
       var scanned = scannedCounts[itemKey(item)] || 0;
       var expectedQty = item.pickedQty;
       var cls = scanned >= expectedQty && expectedQty > 0 ? 'complete' : (scanned > 0 ? 'scanning' : '');
+      var thumb = item.imageUrl
+        ? '<img class="item-thumb" src="' + escapeHtml(item.imageUrl) + '" alt="">'
+        : '<div class="item-thumb placeholder">🍽️</div>';
       html += '<div class="item-row">'
+        + thumb
         + '<span class="item-title">' + escapeHtml(item.title) + '</span>'
         + '<span class="item-count ' + cls + '">' + scanned + ' / ' + expectedQty + '</span>'
         + '</div>';
@@ -166,10 +222,6 @@
     main.innerHTML = html;
     document.getElementById('scanBtn').addEventListener('click', openScanner);
     document.getElementById('finishBtn').addEventListener('click', finishCheck);
-  }
-
-  function escapeHtml(s){
-    return (s==null?'':String(s)).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
   }
 
   function openScanner(){
@@ -214,15 +266,10 @@
   function handleScanResult(scannedCode){
     var scanned = (scannedCode || '').trim();
     var now = Date.now();
-    // Same debounce as picking — holding one item in view for a moment
-    // shouldn't count as several scans of the same physical unit.
     if(scanned === lastScanCode && (now - lastScanTime) < 1500) return;
 
     var matchedItem = expected.items.find(function(i){ return (i.sku || '') === scanned; });
     if(!matchedItem){
-      // Not a hard stop — could be an item genuinely not on this
-      // delivery (a real extra), or a barcode with no SKU on file.
-      // Log it as an unexpected scan rather than blocking.
       scannedCounts['__unexpected__' + scanned] = (scannedCounts['__unexpected__' + scanned] || 0) + 1;
       document.getElementById('scanProgressLabel').textContent = 'Scanned something not on this delivery — noted as extra';
       return;
@@ -234,8 +281,6 @@
     scannedCounts[key] = (scannedCounts[key] || 0) + 1;
     document.getElementById('scanProgressLabel').textContent =
       matchedItem.title + ': ' + scannedCounts[key] + ' of ' + matchedItem.pickedQty;
-
-    if(scanningActive) render(); // keep the live list in sync behind the camera view too
   }
 
   function finishCheck(){
@@ -259,7 +304,7 @@
       .then(function(result){
         var main = document.getElementById('mainContent');
         if(!result.ok){
-          main.innerHTML = '<div class="error-state">Could not submit: ' + (result.error || 'unknown error') + '</div>';
+          main.innerHTML = '<div class="error-state">Could not submit: ' + escapeHtml(result.error || 'unknown error') + '</div>';
           return;
         }
         var hasErrors = result.report.hasErrors;
