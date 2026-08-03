@@ -20,7 +20,9 @@
   .grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:16px; }
   .store-card{
     background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; text-align:center;
+    display:block; text-decoration:none; color:inherit; cursor:pointer; transition:border-color .15s ease;
   }
+  .store-card:active{ border-color:var(--teal); }
   .store-card h2{ font-family:'Poppins', sans-serif; font-weight:700; font-size:17px; margin-bottom:12px; }
   .store-card img{ width:100%; max-width:200px; border-radius:8px; border:1px solid var(--line); }
   .store-card .print-hint{ font-family:'JetBrains Mono', monospace; font-size:10.5px; color:var(--dim); margin-top:10px; }
@@ -35,7 +37,7 @@
 <div class="logo-mark"><img src="/assets/logo.png" alt="Hummus Fit"></div>
 <div class="eyebrow">Receiving</div>
 <h1>Store QR Codes</h1>
-<div class="hint">Print each one and stick it up permanently at that store's receiving area — same code every day, never needs to change.</div>
+<div class="hint">Print each one and stick it up permanently at that store's receiving area for scanning — or tap a store below to jump straight to its receiving check.</div>
 
 <div class="grid" id="grid"></div>
 <a class="reports-link" href="/reports">→ View the live Delivery Accuracy report</a>
@@ -44,11 +46,11 @@
   fetch('/api/stores').then(function(r){ return r.json(); }).then(function(data){
     var grid = document.getElementById('grid');
     grid.innerHTML = data.stores.map(function(store){
-      return '<div class="store-card">'
+      return '<a class="store-card" href="/receiving/' + encodeURIComponent(store) + '">'
         + '<h2>' + store.replace(/</g,'&lt;') + '</h2>'
         + '<img src="/api/qr/' + encodeURIComponent(store) + '" alt="QR code for ' + store.replace(/</g,'&lt;') + '">'
         + '<div class="print-hint">Scan Me to Check Your Delivery</div>'
-        + '</div>';
+        + '</a>';
     }).join('');
   });
 </script>
