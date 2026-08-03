@@ -32,11 +32,7 @@
     background: var(--card);
   }
   .logo-row{ display:flex; align-items:center; gap:8px; margin-bottom:14px; }
-  .logo-mark{
-    font-family:'Poppins', sans-serif; font-weight:700; font-size:15px;
-  }
-  .logo-mark .hummus{ color: var(--teal); }
-  .logo-mark .fit{ color: var(--orange); }
+  .logo-row img{ height:22px; width:auto; display:block; }
   .eyebrow{
     font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700;
     letter-spacing:0.14em; text-transform:uppercase; color:var(--dim);
@@ -49,13 +45,43 @@
     padding:6px 13px; border-radius:999px;
   }
   .info-chip.order{ background:var(--orange-tint); border-color:rgba(232,97,44,0.3); color:var(--orange); }
+  .info-chip.crate{ background:var(--teal-tint); border-color:rgba(43,191,170,0.3); color:var(--teal); font-weight:800; }
 
   main{ padding: 20px 5vw 40px; max-width:640px; margin:0 auto; }
 
   .picked-by-note{
+    display:flex; align-items:center; gap:9px;
     font-family:'JetBrains Mono', monospace; font-size:11.5px; color:var(--dim);
     margin-bottom:16px;
   }
+  .picker-avatar{
+    width:26px; height:26px; border-radius:50%; object-fit:cover;
+    border:1.5px solid var(--line); flex-shrink:0;
+  }
+  .picker-avatar.placeholder{
+    display:flex; align-items:center; justify-content:center;
+    background:var(--teal-tint); color:var(--teal);
+    font-family:'Poppins',sans-serif; font-weight:700; font-size:10px;
+  }
+  .item-row.missing-row{ opacity:0.85; }
+  .item-count.missing{
+    background:var(--bad-tint); color:var(--bad); white-space:nowrap;
+  }
+
+  .received-by-field{
+    background:var(--card); border:1.5px solid var(--teal); border-radius:var(--radius);
+    padding:14px 16px; margin-bottom:14px;
+  }
+  .received-by-field label{
+    display:block; font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700;
+    text-transform:uppercase; letter-spacing:0.08em; color:var(--teal); margin-bottom:6px;
+  }
+  .received-by-field input{
+    width:100%; border:1.5px solid var(--line); background:var(--card-2); color:var(--navy);
+    font-family:'Poppins',sans-serif; font-weight:600; font-size:15px;
+    padding:10px 12px; border-radius:10px; outline:none;
+  }
+  .received-by-field input:focus{ border-color:var(--teal); }
 
   .expected-card{
     background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
@@ -78,10 +104,15 @@
   .item-count{
     font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13.5px;
     padding:5px 12px; border-radius:999px; background:var(--card-2); color:var(--dim);
-    flex-shrink:0;
+    flex-shrink:0; border:none; cursor:pointer;
   }
+  .item-count:active{ opacity:0.7; }
   .item-count.complete{ background:var(--good-tint); color:var(--good); }
   .item-count.scanning{ background:var(--orange-tint); color:var(--orange); }
+  .manual-hint{
+    font-family:'JetBrains Mono', monospace; font-size:10.5px; color:var(--dim);
+    text-align:center; margin-top:-4px; margin-bottom:4px;
+  }
 
   .scan-btn{
     width:100%; background:var(--navy); color:#fff; border:none;
@@ -136,7 +167,7 @@
 
 <header>
   <div class="logo-row">
-    <span class="logo-mark"><span class="hummus">Hummus</span> <span class="fit">FIT</span></span>
+    <img src="/assets/logo.png" alt="Hummus Fit">
   </div>
   <div class="eyebrow">Receiving Check</div>
   <h1 id="storeName">Loading…</h1>
@@ -168,6 +199,8 @@
   var html5QrCode = null;
   var lastScanTime = 0;
   var lastScanCode = null;
+  var currentlyVisibleCode = null;
+  var receivedByValue = '';
 
   function itemKey(item){ return item.sku || item.title; }
   function escapeHtml(s){
@@ -192,6 +225,7 @@
         }
         expected = result.data;
         dateRow.innerHTML += '<span class="info-chip order">Order' + (expected.orderName && expected.orderName.indexOf(',') !== -1 ? 's' : '') + ': ' + escapeHtml(expected.orderName || '—') + '</span>';
+        dateRow.innerHTML += '<span class="info-chip crate">📦 ' + expected.crateCount + ' crate' + (expected.crateCount === 1 ? '' : 's') + ' expected</span>';
         render();
       })
       .catch(function(err){
@@ -199,33 +233,86 @@
       });
   }
 
+  // Reuses the same picker headshots already hosted on Route Board —
+  // no need to re-upload the same photo twice. Add more names here as
+  // more photos get uploaded; anyone not listed just shows initials.
+  var PICKER_PHOTOS = {
+    "Hazar Kutuk": "https://hummusfit-route-board-production.up.railway.app/headshots/hazar-kutuk.png"
+  };
+  function pickerAvatar(name){
+    var photoUrl = PICKER_PHOTOS[name];
+    if(photoUrl){
+      return '<img class="picker-avatar" src="' + escapeHtml(photoUrl) + '" alt="">';
+    }
+    var initials = (name || '?').split(' ').map(function(w){ return w[0]; }).slice(0,2).join('').toUpperCase();
+    return '<div class="picker-avatar placeholder">' + escapeHtml(initials) + '</div>';
+  }
+
   function render(){
     var main = document.getElementById('mainContent');
-    var html = '<div class="picked-by-note">Picked by ' + escapeHtml(expected.pickedBy || 'Unknown') + '</div>';
+    var html = '<div class="picked-by-note">' + pickerAvatar(expected.pickedBy) + '<span>Picked by ' + escapeHtml(expected.pickedBy || 'Unknown') + '</span></div>';
+    html += '<div class="received-by-field">'
+      + '<label for="receivedByInput">Received By</label>'
+      + '<input type="text" id="receivedByInput" placeholder="Type your name" value="' + escapeHtml(receivedByValue) + '">'
+      + '</div>';
     html += '<div class="expected-card">';
     expected.items.forEach(function(item){
       var scanned = scannedCounts[itemKey(item)] || 0;
       var expectedQty = item.pickedQty;
-      var cls = scanned >= expectedQty && expectedQty > 0 ? 'complete' : (scanned > 0 ? 'scanning' : '');
       var thumb = item.imageUrl
         ? '<img class="item-thumb" src="' + escapeHtml(item.imageUrl) + '" alt="">'
         : '<div class="item-thumb placeholder">🍽️</div>';
+
+      // An item marked "missing" during picking never actually got put
+      // in the crate — showing it as a plain "0 / 0" would look
+      // identical to any other untouched item and easily get missed.
+      // Flag it clearly instead so it's obvious why nothing's expected.
+      if(item.status === 'missing'){
+        html += '<div class="item-row missing-row">'
+          + thumb
+          + '<span class="item-title">' + escapeHtml(item.title) + '</span>'
+          + '<span class="item-count missing">⚠ Missing from picking</span>'
+          + '</div>';
+        return;
+      }
+
+      var cls = scanned >= expectedQty && expectedQty > 0 ? 'complete' : (scanned > 0 ? 'scanning' : '');
       html += '<div class="item-row">'
         + thumb
         + '<span class="item-title">' + escapeHtml(item.title) + '</span>'
-        + '<span class="item-count ' + cls + '">' + scanned + ' / ' + expectedQty + '</span>'
+        + '<button class="item-count ' + cls + '" data-manual-key="' + escapeHtml(itemKey(item)) + '" data-manual-title="' + escapeHtml(item.title) + '">' + scanned + ' / ' + expectedQty + '</button>'
         + '</div>';
     });
     html += '</div>';
+    html += '<div class="manual-hint">Tap any count to type it in by hand if scanning isn\'t cooperating</div>';
     html += '<button class="scan-btn" id="scanBtn">📷 Scan Items</button>';
     html += '<button class="finish-btn" id="finishBtn">✓ Finish Receiving Check</button>';
     main.innerHTML = html;
     document.getElementById('scanBtn').addEventListener('click', openScanner);
+    document.querySelectorAll('[data-manual-key]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var key = btn.getAttribute('data-manual-key');
+        var title = btn.getAttribute('data-manual-title');
+        var current = scannedCounts[key] || 0;
+        var input = prompt('How many "' + title + '" did you actually count?', current);
+        if(input === null) return;
+        var num = parseInt(input, 10);
+        if(isNaN(num) || num < 0){
+          alert('Enter a whole number, 0 or higher.');
+          return;
+        }
+        scannedCounts[key] = num;
+        render();
+      });
+    });
     document.getElementById('finishBtn').addEventListener('click', finishCheck);
+    document.getElementById('receivedByInput').addEventListener('input', function(e){
+      receivedByValue = e.target.value;
+    });
   }
 
   function openScanner(){
-    lastScanTime = 0; lastScanCode = null;
+    lastScanTime = 0; lastScanCode = null; currentlyVisibleCode = null;
     document.getElementById('scannerOverlay').style.display = 'flex';
     document.getElementById('scanProgressLabel').textContent = 'Point the camera at each item as you unload it';
     if(typeof Html5Qrcode === 'undefined'){
@@ -245,7 +332,16 @@
       { facingMode: 'environment' },
       { fps: 10, qrbox: { width: 280, height: 140 } },
       handleScanResult,
-      function(){ /* ignore per-frame misses */ }
+      function(){
+        // Fires every frame where NO code is currently visible — this is
+        // what lets a barcode be scanned again later: it has to actually
+        // leave view first (a real item being set down and a new one
+        // brought up), not just "some time has passed" while it never
+        // moved. Without this, a barcode held steady — or, like in
+        // testing, pointed at a photo on a screen — gets recounted
+        // endlessly since it never technically goes away.
+        currentlyVisibleCode = null;
+      }
     ).catch(function(err){
       alert('Could not access the camera: ' + err);
       closeScanner();
@@ -263,30 +359,60 @@
   }
   document.getElementById('scannerCloseBtn').addEventListener('click', closeScanner);
 
+  // A short, synthesized beep — no audio file needed. Plus a haptic
+  // buzz where the browser supports it (Android Chrome does; iOS
+  // Safari currently has no Vibration API at all, so the beep is the
+  // real feedback there — the vibrate call is just a harmless no-op
+  // on iOS, not an error).
+  function playScanFeedback(){
+    try{
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 1000;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.12);
+    } catch(e){ /* Web Audio unsupported — silently skip, scan still counts */ }
+    if(navigator.vibrate) navigator.vibrate(80);
+  }
+
   function handleScanResult(scannedCode){
     var scanned = (scannedCode || '').trim();
-    var now = Date.now();
-    if(scanned === lastScanCode && (now - lastScanTime) < 1500) return;
+
+    // Same code still sitting in frame from the last detection — not a
+    // new physical item, ignore it until it actually disappears first.
+    if(scanned === currentlyVisibleCode) return;
+    currentlyVisibleCode = scanned;
 
     var matchedItem = expected.items.find(function(i){ return (i.sku || '') === scanned; });
     if(!matchedItem){
       scannedCounts['__unexpected__' + scanned] = (scannedCounts['__unexpected__' + scanned] || 0) + 1;
       document.getElementById('scanProgressLabel').textContent = 'Scanned something not on this delivery — noted as extra';
+      playScanFeedback();
       return;
     }
 
-    lastScanTime = now;
-    lastScanCode = scanned;
     var key = itemKey(matchedItem);
     scannedCounts[key] = (scannedCounts[key] || 0) + 1;
     document.getElementById('scanProgressLabel').textContent =
       matchedItem.title + ': ' + scannedCounts[key] + ' of ' + matchedItem.pickedQty;
+    playScanFeedback();
+    render();
   }
 
   function finishCheck(){
+    var receivedBy = (document.getElementById('receivedByInput').value || '').trim();
+    if(!receivedBy){
+      alert('Enter your name in "Received By" before finishing.');
+      document.getElementById('receivedByInput').focus();
+      return;
+    }
     if(!confirm('Finish the receiving check for ' + storeName + '? This locks in what was scanned.')) return;
-    var receivedBy = prompt('Your name, for the record:');
-    if(!receivedBy) return;
 
     fetch('/api/submit-receiving-check', {
       method: 'POST',
