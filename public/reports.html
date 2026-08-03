@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hummus Fit — Delivery Accuracy</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B1220; --card:#141D33; --card-2:#1B2540; --line:rgba(255,255,255,0.10);
+    --ink:#F4F6FB; --dim:#8A93AC; --accent:#3E8BFF; --accent-tint:rgba(62,139,255,0.14);
+    --good:#31C48D; --good-tint:rgba(49,196,141,0.14);
+    --bad:#F0553F; --bad-tint:rgba(240,85,63,0.14);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:var(--bg); color:var(--ink); font-family:'Space Grotesk',sans-serif; min-height:100%;}
+  header{ padding:28px 4vw 20px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+  .eyebrow{ font-family:'JetBrains Mono', monospace; font-size:12px; font-weight:700; letter-spacing:0.18em; text-transform:uppercase; color:var(--accent); margin-bottom:6px; }
+  h1{ font-size:32px; font-weight:700; }
+  .refresh-hint{ font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--dim); }
+  main{ padding:28px 4vw 60px; max-width:1100px; margin:0 auto; }
+  .filter-tabs{ display:flex; gap:10px; margin-bottom:24px; flex-wrap:wrap; }
+  .filter-tab{
+    font-family:'JetBrains Mono', monospace; font-size:12px; font-weight:700; text-transform:uppercase;
+    background:var(--card-2); color:var(--dim); border:1px solid var(--line); padding:9px 16px;
+    border-radius:999px; cursor:pointer;
+  }
+  .filter-tab.active{ background:var(--accent); color:#fff; border-color:var(--accent); }
+
+  .report-card{
+    background:var(--card); border:1px solid var(--line); border-radius:18px;
+    padding:20px 22px; margin-bottom:14px;
+  }
+  .report-top{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; flex-wrap:wrap; gap:10px; }
+  .report-store{ font-size:20px; font-weight:700; }
+  .report-meta{ font-family:'JetBrains Mono', monospace; font-size:11.5px; color:var(--dim); margin-top:4px; }
+  .error-badge{
+    font-family:'JetBrains Mono', monospace; font-size:13px; font-weight:700;
+    padding:6px 14px; border-radius:999px;
+  }
+  .error-badge.good{ background:var(--good-tint); color:var(--good); }
+  .error-badge.bad{ background:var(--bad-tint); color:var(--bad); }
+  .discrepancy-row{
+    font-size:14px; padding:6px 0; color:var(--ink); display:flex; justify-content:space-between;
+  }
+  .discrepancy-row .diff-short{ color:var(--bad); font-weight:700; }
+  .discrepancy-row .diff-extra{ color:var(--accent); font-weight:700; }
+
+  .empty-state{ text-align:center; padding:80px 20px; color:var(--dim); font-family:'JetBrains Mono', monospace; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="eyebrow">Hummus Fit / Receiving</div>
+    <h1>Delivery Accuracy</h1>
+  </div>
+  <div class="refresh-hint" id="lastUpdated"></div>
+</header>
+
+<main>
+  <div class="filter-tabs">
+    <button class="filter-tab active" data-filter="all">All Reports</button>
+    <button class="filter-tab" data-filter="errors">Errors Only</button>
+  </div>
+  <div id="content" class="empty-state">Loading…</div>
+</main>
+
+<script>
+  var currentFilter = 'all';
+
+  function timeAgo(iso){
+    var diffMin = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if(diffMin < 1) return 'just now';
+    if(diffMin < 60) return diffMin + 'm ago';
+    var diffHr = Math.round(diffMin / 60);
+    if(diffHr < 24) return diffHr + 'h ago';
+    return Math.round(diffHr / 24) + 'd ago';
+  }
+
+  function render(reports){
+    var el = document.getElementById('content');
+    var filtered = currentFilter === 'errors' ? reports.filter(function(r){ return r.hasErrors; }) : reports;
+
+    if(filtered.length === 0){
+      el.className = 'empty-state';
+      el.textContent = currentFilter === 'errors' ? 'No errors reported — everything checked out clean.' : 'No receiving checks logged yet.';
+      return;
+    }
+
+    el.className = '';
+    el.innerHTML = filtered.map(function(r){
+      var discrepancies = r.items.filter(function(i){ return i.diff !== 0; });
+      var rows = discrepancies.map(function(i){
+        var cls = i.diff < 0 ? 'diff-short' : 'diff-extra';
+        var label = i.diff < 0 ? (Math.abs(i.diff) + ' short') : ('+' + i.diff + ' extra');
+        return '<div class="discrepancy-row"><span>' + i.title.replace(/</g,'&lt;') + '</span><span class="' + cls + '">' + label + ' (expected ' + i.expectedFromPicking + ', got ' + i.actuallyReceived + ')</span></div>';
+      }).join('');
+
+      return '<div class="report-card">'
+        + '<div class="report-top">'
+        + '<div><div class="report-store">' + r.store.replace(/</g,'&lt;') + (r.orderName ? ' — ' + r.orderName : '') + '</div>'
+        + '<div class="report-meta">Picked by ' + (r.pickedBy||'—') + ' · Received by ' + (r.receivedBy||'—') + ' · ' + timeAgo(r.submittedAt) + '</div></div>'
+        + '<div class="error-badge ' + (r.hasErrors ? 'bad' : 'good') + '">' + (r.hasErrors ? r.errorPercent + '% error' : '✓ Clean') + '</div>'
+        + '</div>'
+        + rows
+        + '</div>';
+    }).join('');
+  }
+
+  function load(){
+    fetch('/api/reports')
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        render(data.reports);
+        document.getElementById('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+      })
+      .catch(function(err){
+        document.getElementById('content').className = 'empty-state';
+        document.getElementById('content').textContent = 'Could not load reports: ' + err.message;
+      });
+  }
+
+  document.querySelectorAll('.filter-tab').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('.filter-tab').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentFilter = btn.getAttribute('data-filter');
+      load();
+    });
+  });
+
+  load();
+  setInterval(load, 30000);
+</script>
+
+</body>
+</html>

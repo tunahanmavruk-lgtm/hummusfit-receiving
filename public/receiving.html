@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>Hummus Fit — Receiving Check</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root{
+    --bg:#0B1220;
+    --card:#141D33;
+    --card-2:#1B2540;
+    --line:rgba(255,255,255,0.10);
+    --ink:#F4F6FB;
+    --dim:#8A93AC;
+    --accent:#3E8BFF;
+    --accent-tint:rgba(62,139,255,0.14);
+    --good:#31C48D;
+    --good-tint:rgba(49,196,141,0.14);
+    --bad:#F0553F;
+    --bad-tint:rgba(240,85,63,0.14);
+    --radius:18px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
+  html,body{background:var(--bg); color:var(--ink); font-family:'Space Grotesk',sans-serif; min-height:100%;}
+  header{
+    padding: max(20px, env(safe-area-inset-top)) 5vw 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .eyebrow{
+    font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700;
+    letter-spacing:0.18em; text-transform:uppercase; color:var(--accent); margin-bottom:6px;
+  }
+  h1{ font-size: 26px; font-weight:700; }
+  main{ padding: 20px 5vw 40px; max-width:640px; margin:0 auto; }
+
+  .expected-card{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:18px; margin-bottom:14px;
+  }
+  .item-row{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:12px 0; border-top:1px solid var(--line);
+  }
+  .item-row:first-child{ border-top:none; }
+  .item-title{ font-weight:600; font-size:14.5px; }
+  .item-count{
+    font-family:'JetBrains Mono', monospace; font-weight:700; font-size:14px;
+    padding:5px 12px; border-radius:999px; background:var(--card-2); color:var(--dim);
+  }
+  .item-count.complete{ background:var(--good-tint); color:var(--good); }
+  .item-count.scanning{ background:var(--accent-tint); color:var(--accent); }
+
+  .scan-btn{
+    width:100%; background:var(--accent); color:#fff; border:none;
+    font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:17px;
+    padding:18px; border-radius:16px; margin-top:20px; cursor:pointer;
+  }
+  .scan-btn:active{ opacity:0.85; }
+
+  .finish-btn{
+    width:100%; background:var(--good); color:#0B1220; border:none;
+    font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:16px;
+    padding:16px; border-radius:16px; margin-top:14px; cursor:pointer;
+  }
+  .finish-btn:disabled{ opacity:0.4; }
+
+  #scannerOverlay{
+    position:fixed; inset:0; background:#000; z-index:200;
+    display:none; flex-direction:column;
+  }
+  #scannerOverlay .scanner-header{
+    padding: max(20px, env(safe-area-inset-top)) 20px 16px;
+    display:flex; justify-content:space-between; align-items:center;
+    color:#fff; font-family:'JetBrains Mono', monospace; font-weight:700;
+  }
+  #scannerOverlay .scanner-close{ font-size:22px; color:#fff; cursor:pointer; padding:4px 10px; }
+  #reader{ flex:1; }
+  .scan-progress-label{
+    padding: 16px 20px max(16px, env(safe-area-inset-bottom));
+    color:#fff; font-weight:700; font-size:15px; text-align:center;
+    background: rgba(0,0,0,0.6);
+  }
+
+  .empty-state, .error-state{
+    text-align:center; padding:60px 20px; color:var(--dim);
+    font-family:'JetBrains Mono', monospace; font-size:13px; line-height:1.8;
+  }
+  .error-state{ color:var(--bad); }
+
+  .result-banner{
+    border-radius:var(--radius); padding:24px; text-align:center; margin-bottom:16px;
+    font-weight:700; font-size:17px;
+  }
+  .result-banner.good{ background:var(--good-tint); color:var(--good); }
+  .result-banner.bad{ background:var(--bad-tint); color:var(--bad); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Hummus Fit / Receiving</div>
+  <h1 id="storeName">Loading…</h1>
+</header>
+
+<main id="mainContent">
+  <div class="empty-state">Loading today's delivery…</div>
+</main>
+
+<div id="scannerOverlay">
+  <div class="scanner-header">
+    <span>Scan item barcode</span>
+    <span class="scanner-close" id="scannerCloseBtn">✕</span>
+  </div>
+  <div id="reader"></div>
+  <div id="scanProgressLabel" class="scan-progress-label"></div>
+</div>
+
+<script>
+(function(){
+  var storeName = decodeURIComponent(location.pathname.split('/receiving/')[1] || '');
+  document.getElementById('storeName').textContent = storeName || 'Unknown Store';
+
+  var expected = null;
+  var scannedCounts = {}; // keyed by sku (or title if no sku)
+  var html5QrCode = null;
+  var scanningActive = false;
+  var lastScanTime = 0;
+  var lastScanCode = null;
+
+  function itemKey(item){ return item.sku || item.title; }
+
+  function loadExpected(){
+    fetch('/api/expected/' + encodeURIComponent(storeName))
+      .then(function(r){ return r.json().then(function(data){ return { ok: r.ok, data: data }; }); })
+      .then(function(result){
+        var main = document.getElementById('mainContent');
+        if(!result.ok){
+          main.innerHTML = '<div class="error-state">' + (result.data.error || 'No delivery found for this store yet today.') + '</div>';
+          return;
+        }
+        expected = result.data;
+        render();
+      })
+      .catch(function(err){
+        document.getElementById('mainContent').innerHTML = '<div class="error-state">Could not reach the server: ' + err.message + '</div>';
+      });
+  }
+
+  function render(){
+    var main = document.getElementById('mainContent');
+    var html = '<div class="expected-card">';
+    expected.items.forEach(function(item){
+      var scanned = scannedCounts[itemKey(item)] || 0;
+      var expectedQty = item.pickedQty;
+      var cls = scanned >= expectedQty && expectedQty > 0 ? 'complete' : (scanned > 0 ? 'scanning' : '');
+      html += '<div class="item-row">'
+        + '<span class="item-title">' + escapeHtml(item.title) + '</span>'
+        + '<span class="item-count ' + cls + '">' + scanned + ' / ' + expectedQty + '</span>'
+        + '</div>';
+    });
+    html += '</div>';
+    html += '<button class="scan-btn" id="scanBtn">📷 Scan Items</button>';
+    html += '<button class="finish-btn" id="finishBtn">✓ Finish Receiving Check</button>';
+    main.innerHTML = html;
+    document.getElementById('scanBtn').addEventListener('click', openScanner);
+    document.getElementById('finishBtn').addEventListener('click', finishCheck);
+  }
+
+  function escapeHtml(s){
+    return (s==null?'':String(s)).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
+  }
+
+  function openScanner(){
+    lastScanTime = 0; lastScanCode = null;
+    document.getElementById('scannerOverlay').style.display = 'flex';
+    document.getElementById('scanProgressLabel').textContent = 'Point the camera at each item as you unload it';
+    if(typeof Html5Qrcode === 'undefined'){
+      alert('Scanner failed to load. Check your connection and try again.');
+      closeScanner();
+      return;
+    }
+    html5QrCode = new Html5Qrcode('reader', {
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.ITF, Html5QrcodeSupportedFormats.QR_CODE
+      ]
+    });
+    html5QrCode.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 280, height: 140 } },
+      handleScanResult,
+      function(){ /* ignore per-frame misses */ }
+    ).catch(function(err){
+      alert('Could not access the camera: ' + err);
+      closeScanner();
+    });
+  }
+
+  function closeScanner(){
+    document.getElementById('scannerOverlay').style.display = 'none';
+    if(html5QrCode){
+      html5QrCode.stop().catch(function(){}).then(function(){
+        html5QrCode.clear();
+        html5QrCode = null;
+      });
+    }
+  }
+  document.getElementById('scannerCloseBtn').addEventListener('click', closeScanner);
+
+  function handleScanResult(scannedCode){
+    var scanned = (scannedCode || '').trim();
+    var now = Date.now();
+    // Same debounce as picking — holding one item in view for a moment
+    // shouldn't count as several scans of the same physical unit.
+    if(scanned === lastScanCode && (now - lastScanTime) < 1500) return;
+
+    var matchedItem = expected.items.find(function(i){ return (i.sku || '') === scanned; });
+    if(!matchedItem){
+      // Not a hard stop — could be an item genuinely not on this
+      // delivery (a real extra), or a barcode with no SKU on file.
+      // Log it as an unexpected scan rather than blocking.
+      scannedCounts['__unexpected__' + scanned] = (scannedCounts['__unexpected__' + scanned] || 0) + 1;
+      document.getElementById('scanProgressLabel').textContent = 'Scanned something not on this delivery — noted as extra';
+      return;
+    }
+
+    lastScanTime = now;
+    lastScanCode = scanned;
+    var key = itemKey(matchedItem);
+    scannedCounts[key] = (scannedCounts[key] || 0) + 1;
+    document.getElementById('scanProgressLabel').textContent =
+      matchedItem.title + ': ' + scannedCounts[key] + ' of ' + matchedItem.pickedQty;
+
+    if(scanningActive) render(); // keep the live list in sync behind the camera view too
+  }
+
+  function finishCheck(){
+    if(!confirm('Finish the receiving check for ' + storeName + '? This locks in what was scanned.')) return;
+    var receivedBy = prompt('Your name, for the record:');
+    if(!receivedBy) return;
+
+    fetch('/api/submit-receiving-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        store: storeName,
+        orderName: expected.orderName,
+        pickedBy: expected.pickedBy,
+        receivedBy: receivedBy,
+        expectedItems: expected.items,
+        scannedCounts: scannedCounts,
+      })
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(result){
+        var main = document.getElementById('mainContent');
+        if(!result.ok){
+          main.innerHTML = '<div class="error-state">Could not submit: ' + (result.error || 'unknown error') + '</div>';
+          return;
+        }
+        var hasErrors = result.report.hasErrors;
+        var html = '<div class="result-banner ' + (hasErrors ? 'bad' : 'good') + '">'
+          + (hasErrors ? '⚠ ' + result.report.errorPercent + '% discrepancy — logged' : '✓ All good — everything matched')
+          + '</div>';
+        main.innerHTML = html;
+      })
+      .catch(function(err){
+        alert('Could not submit: ' + err.message);
+      });
+  }
+
+  loadExpected();
+})();
+</script>
+
+</body>
+</html>

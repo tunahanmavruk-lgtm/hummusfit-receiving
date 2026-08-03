@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hummus Fit — Receiving QR Codes</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B1220; --card:#141D33; --line:rgba(255,255,255,0.10);
+    --ink:#F4F6FB; --dim:#8A93AC; --accent:#3E8BFF;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{background:var(--bg); color:var(--ink); font-family:'Space Grotesk',sans-serif; padding:28px 4vw 60px;}
+  .eyebrow{ font-family:'JetBrains Mono', monospace; font-size:12px; font-weight:700; letter-spacing:0.18em; text-transform:uppercase; color:var(--accent); margin-bottom:6px; }
+  h1{ font-size:32px; font-weight:700; margin-bottom:8px; }
+  .hint{ color:var(--dim); font-size:14px; margin-bottom:28px; max-width:560px; line-height:1.6; }
+  .grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:18px; }
+  .store-card{
+    background:#fff; border-radius:18px; padding:20px; text-align:center;
+  }
+  .store-card h2{ color:#0B1220; font-size:17px; margin-bottom:12px; }
+  .store-card img{ width:100%; max-width:200px; border-radius:8px; }
+  .store-card .print-hint{ font-family:'JetBrains Mono', monospace; font-size:10.5px; color:#8A93AC; margin-top:10px; }
+  a.reports-link{
+    display:inline-block; margin-top:24px; color:var(--accent); font-weight:700;
+    font-family:'JetBrains Mono', monospace; font-size:12px; text-decoration:none;
+  }
+</style>
+</head>
+<body>
+
+<div class="eyebrow">Hummus Fit / Receiving</div>
+<h1>Store QR Codes</h1>
+<div class="hint">Print each one and stick it up permanently at that store's receiving area — same code every day, never needs to change.</div>
+
+<div class="grid" id="grid"></div>
+<a class="reports-link" href="/reports">→ View the live Delivery Accuracy report</a>
+
+<script>
+  fetch('/api/stores').then(function(r){ return r.json(); }).then(function(data){
+    var grid = document.getElementById('grid');
+    grid.innerHTML = data.stores.map(function(store){
+      return '<div class="store-card">'
+        + '<h2>' + store.replace(/</g,'&lt;') + '</h2>'
+        + '<img src="/api/qr/' + encodeURIComponent(store) + '" alt="QR code for ' + store.replace(/</g,'&lt;') + '">'
+        + '<div class="print-hint">Scan Me to Check Your Delivery</div>'
+        + '</div>';
+    }).join('');
+  });
+</script>
+
+</body>
+</html>
