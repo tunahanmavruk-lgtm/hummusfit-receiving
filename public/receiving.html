@@ -134,7 +134,13 @@
   /* Every non-missing item has to be explicitly touched — either
      confirmed correct or reported with a real count — before Finish
      unlocks. This is what makes that state visible at a glance. */
-  .item-row.unresolved{ box-shadow: inset 3px 0 0 var(--orange); background: var(--orange-tint); }
+  /* A full orange-tint fill clashed against product photos that are
+     shot on plain white backgrounds — the photo's white square sat on
+     top of an orange row and looked broken, not like a UI state. Keep
+     the "needs attention" cue as just a left accent stripe on the
+     normal white card background instead, so the photo blends in the
+     way it does on every other row. */
+  .item-row.unresolved{ box-shadow: inset 3px 0 0 var(--orange); background: var(--card-2); }
   .confirm-btn{
     width:34px; height:34px; border-radius:50%; border:1.5px solid var(--line);
     background:var(--card); color:var(--dim); font-size:15px; flex-shrink:0; cursor:pointer;
