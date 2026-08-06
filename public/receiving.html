@@ -282,9 +282,19 @@
   // and hands us its IMEI directly. No vanImei means that van doesn't
   // have a confirmed Bouncie match yet, so skip the link rather than
   // send someone to a tracker page that can't find the vehicle.
+  // Points at Fleet Tracker's dedicated single-van page (/track.html),
+  // not the main dashboard — that page shows the ENTIRE fleet, which a
+  // store employee has no business seeing. /track.html is scoped
+  // server-side to just this one van (see fleet-tracker's /api/vehicle/
+  // :imei), and it self-checks delivery status against Route Board so
+  // tracking actually stops once the drop-off happens, even if someone
+  // bookmarks the link. Never shown once delivered — that's redundant
+  // once it's here, and matches what /track.html would show anyway.
   function vanTrackLinkHtml(){
-    if(!etaInfo || !etaInfo.started || !etaInfo.van || !etaInfo.vanImei || !etaInfo.fleetTrackerUrl) return '';
-    var url = etaInfo.fleetTrackerUrl + '/?imei=' + encodeURIComponent(etaInfo.vanImei);
+    if(!etaInfo || !etaInfo.started || etaInfo.delivered || !etaInfo.van || !etaInfo.vanImei || !etaInfo.fleetTrackerUrl) return '';
+    var url = etaInfo.fleetTrackerUrl + '/track.html?imei=' + encodeURIComponent(etaInfo.vanImei) +
+      '&stop=' + encodeURIComponent(storeName) +
+      '&routeBoardUrl=' + encodeURIComponent(ROUTE_BOARD_URL);
     return '<a class="eta-track-link" href="' + escapeHtml(url) + '" target="_blank" rel="noopener">📍 Track ' + escapeHtml(etaInfo.van) + ' live</a>';
   }
 
@@ -295,7 +305,6 @@
       return '<div class="eta-card live"><span class="eta-dot live"></span><div>'
         + '<div class="eta-label">✓ Delivered' + (deliveredTime ? ' at ' + deliveredTime : '') + '</div>'
         + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + '</div>'
-        + vanTrackLinkHtml()
         + '</div></div>';
     }
     if(!etaInfo.started){
