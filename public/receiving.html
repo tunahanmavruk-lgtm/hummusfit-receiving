@@ -78,6 +78,12 @@
   .eta-dot.live{ background:var(--teal); box-shadow:0 0 0 4px rgba(43,191,170,0.18); }
   .eta-label{ font-family:'Poppins',sans-serif; font-weight:700; font-size:14.5px; color:var(--navy); }
   .eta-sub{ font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--dim); margin-top:2px; }
+  .eta-track-link{
+    display:inline-block; margin-top:8px;
+    font-family:'JetBrains Mono', monospace; font-size:11px; font-weight:700;
+    color:var(--teal); text-decoration:none; border-bottom:1px solid rgba(43,191,170,0.4);
+  }
+  .eta-track-link:active{ opacity:0.7; }
 
   .received-by-field{
     background:var(--card); border:1.5px solid var(--teal); border-radius:var(--radius);
@@ -267,6 +273,15 @@
     } catch(e){ return ''; }
   }
 
+  // Only makes sense once the route is actually out — a van "assigned"
+  // to a route that hasn't started yet isn't necessarily on the road at
+  // all, so this link only shows once etaInfo.started is true.
+  function vanTrackLinkHtml(){
+    if(!etaInfo || !etaInfo.started || !etaInfo.van || !etaInfo.fleetTrackerUrl) return '';
+    var url = etaInfo.fleetTrackerUrl + '/?van=' + encodeURIComponent(etaInfo.van);
+    return '<a class="eta-track-link" href="' + escapeHtml(url) + '" target="_blank" rel="noopener">📍 Track ' + escapeHtml(etaInfo.van) + ' live</a>';
+  }
+
   function etaCardHtml(){
     if(!etaInfo) return '';
     if(etaInfo.delivered){
@@ -274,6 +289,7 @@
       return '<div class="eta-card live"><span class="eta-dot live"></span><div>'
         + '<div class="eta-label">✓ Delivered' + (deliveredTime ? ' at ' + deliveredTime : '') + '</div>'
         + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + '</div>'
+        + vanTrackLinkHtml()
         + '</div></div>';
     }
     if(!etaInfo.started){
@@ -287,6 +303,7 @@
       return '<div class="eta-card pending"><span class="eta-dot"></span><div>'
         + '<div class="eta-label">On the route — arrival time pending</div>'
         + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + '</div>'
+        + vanTrackLinkHtml()
         + '</div></div>';
     }
     var stopsAwayText = etaInfo.stopsAway === 0
@@ -295,6 +312,7 @@
     return '<div class="eta-card live"><span class="eta-dot live"></span><div>'
       + '<div class="eta-label">Estimated Arrival: ' + formatEtaTime(etaInfo.eta) + '</div>'
       + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + ' · ' + stopsAwayText + '</div>'
+      + vanTrackLinkHtml()
       + '</div></div>';
   }
 
