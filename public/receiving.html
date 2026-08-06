@@ -68,6 +68,17 @@
     background:var(--bad-tint); color:var(--bad); white-space:nowrap;
   }
 
+  .eta-card{
+    display:flex; align-items:center; gap:12px;
+    background:var(--teal-tint); border:1px solid rgba(43,191,170,0.35);
+    border-radius:var(--radius); padding:14px 16px; margin-bottom:14px;
+  }
+  .eta-card.pending{ background:var(--card-2); border-color:var(--line); }
+  .eta-dot{ width:10px; height:10px; border-radius:50%; background:var(--dim); flex-shrink:0; }
+  .eta-dot.live{ background:var(--teal); box-shadow:0 0 0 4px rgba(43,191,170,0.18); }
+  .eta-label{ font-family:'Poppins',sans-serif; font-weight:700; font-size:14.5px; color:var(--navy); }
+  .eta-sub{ font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--dim); margin-top:2px; }
+
   .received-by-field{
     background:var(--card); border:1.5px solid var(--teal); border-radius:var(--radius);
     padding:14px 16px; margin-bottom:14px;
@@ -194,7 +205,13 @@
 
   var todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'America/New_York' });
 
+  // Route Board's public, CORS-enabled ETA lookup — same server this app
+  // already pulls "what was picked" ground truth and picker headshots
+  // from, so this doesn't introduce a new dependency.
+  var ROUTE_BOARD_URL = 'https://hummusfit-route-board-production.up.railway.app';
+
   var expected = null;
+  var etaInfo = null;
   var scannedCounts = {};
   var html5QrCode = null;
   var lastScanTime = 0;
@@ -209,6 +226,13 @@
   }
 
   function loadExpected(){
+    // Kick off in parallel — the ETA lookup goes straight to Route Board
+    // (cross-origin) so it doesn't hold up the expected-items fetch, and
+    // a failure here should never block the receiving check itself.
+    var etaPromise = fetch(ROUTE_BOARD_URL + '/api/store-eta/' + encodeURIComponent(storeName))
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .catch(function(){ return null; });
+
     fetch('/api/expected/' + encodeURIComponent(storeName))
       .then(function(r){ return r.json().then(function(data){ return { ok: r.ok, data: data }; }); })
       .then(function(result){
@@ -227,11 +251,44 @@
         expected = result.data;
         dateRow.innerHTML += '<span class="info-chip order">Order' + (expected.orderName && expected.orderName.indexOf(',') !== -1 ? 's' : '') + ': ' + escapeHtml(expected.orderName || '—') + '</span>';
         dateRow.innerHTML += '<span class="info-chip crate">📦 ' + expected.crateCount + ' crate' + (expected.crateCount === 1 ? '' : 's') + ' expected</span>';
-        render();
+        etaPromise.then(function(eta){
+          etaInfo = eta;
+          render();
+        });
       })
       .catch(function(err){
         document.getElementById('mainContent').innerHTML = '<div class="error-state">Could not reach the server: ' + escapeHtml(err.message) + '</div>';
       });
+  }
+
+  function formatEtaTime(iso){
+    try{
+      return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
+    } catch(e){ return ''; }
+  }
+
+  function etaCardHtml(){
+    if(!etaInfo) return '';
+    if(!etaInfo.started){
+      var sched = etaInfo.scheduledTime ? ' · scheduled ~' + escapeHtml(etaInfo.scheduledTime) : '';
+      return '<div class="eta-card pending"><span class="eta-dot"></span><div>'
+        + '<div class="eta-label">Delivery not on the road yet</div>'
+        + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + sched + '</div>'
+        + '</div></div>';
+    }
+    if(!etaInfo.eta){
+      return '<div class="eta-card pending"><span class="eta-dot"></span><div>'
+        + '<div class="eta-label">On the route — arrival time pending</div>'
+        + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + '</div>'
+        + '</div></div>';
+    }
+    var stopsAwayText = etaInfo.stopsAway === 0
+      ? 'Next stop'
+      : (etaInfo.stopsAway + ' stop' + (etaInfo.stopsAway === 1 ? '' : 's') + ' ahead of you');
+    return '<div class="eta-card live"><span class="eta-dot live"></span><div>'
+      + '<div class="eta-label">Estimated Arrival: ' + formatEtaTime(etaInfo.eta) + '</div>'
+      + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + ' · ' + stopsAwayText + '</div>'
+      + '</div></div>';
   }
 
   // Reuses the same picker headshots already hosted on Route Board —
@@ -251,7 +308,8 @@
 
   function render(){
     var main = document.getElementById('mainContent');
-    var html = '<div class="picked-by-note">' + pickerAvatar(expected.pickedBy) + '<span>Picked by ' + escapeHtml(expected.pickedBy || 'Unknown') + '</span></div>';
+    var html = etaCardHtml();
+    html += '<div class="picked-by-note">' + pickerAvatar(expected.pickedBy) + '<span>Picked by ' + escapeHtml(expected.pickedBy || 'Unknown') + '</span></div>';
     html += '<div class="received-by-field">'
       + '<label for="receivedByInput">Received By</label>'
       + '<input type="text" id="receivedByInput" placeholder="Type your name" value="' + escapeHtml(receivedByValue) + '">'
