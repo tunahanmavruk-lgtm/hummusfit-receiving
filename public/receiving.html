@@ -269,6 +269,13 @@
 
   function etaCardHtml(){
     if(!etaInfo) return '';
+    if(etaInfo.delivered){
+      var deliveredTime = etaInfo.deliveredAt ? formatEtaTime(etaInfo.deliveredAt) : '';
+      return '<div class="eta-card live"><span class="eta-dot live"></span><div>'
+        + '<div class="eta-label">✓ Delivered' + (deliveredTime ? ' at ' + deliveredTime : '') + '</div>'
+        + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + '</div>'
+        + '</div></div>';
+    }
     if(!etaInfo.started){
       var sched = etaInfo.scheduledTime ? ' · scheduled ~' + escapeHtml(etaInfo.scheduledTime) : '';
       return '<div class="eta-card pending"><span class="eta-dot"></span><div>'
