@@ -131,6 +131,18 @@
     text-align:center; margin-top:-4px; margin-bottom:4px;
   }
 
+  /* Every non-missing item has to be explicitly touched — either
+     confirmed correct or reported with a real count — before Finish
+     unlocks. This is what makes that state visible at a glance. */
+  .item-row.unresolved{ box-shadow: inset 3px 0 0 var(--orange); background: var(--orange-tint); }
+  .confirm-btn{
+    width:34px; height:34px; border-radius:50%; border:1.5px solid var(--line);
+    background:var(--card); color:var(--dim); font-size:15px; flex-shrink:0; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; padding:0;
+  }
+  .confirm-btn:active{ opacity:0.7; }
+  .confirm-btn.done{ background:var(--good-tint); border-color:var(--good); color:var(--good); }
+
   .scan-btn{
     width:100%; background:var(--navy); color:#fff; border:none;
     font-family:'Poppins',sans-serif; font-weight:700; font-size:16px;
@@ -144,6 +156,7 @@
     padding:15px; border-radius:999px; margin-top:12px; cursor:pointer;
   }
   .finish-btn:disabled{ opacity:0.4; }
+  .finish-btn.pending{ background:var(--card-2); color:var(--dim); cursor:not-allowed; }
 
   #scannerOverlay{
     position:fixed; inset:0; background:#000; z-index:200;
@@ -219,6 +232,11 @@
   var expected = null;
   var etaInfo = null;
   var scannedCounts = {};
+  // Explicit "this item was actually checked" flag, separate from the
+  // count itself — a 0 count is a legitimate "reported missing," but an
+  // item nobody ever touched has no business looking the same. Finish
+  // stays locked until every non-picking-missing item has one of these.
+  var resolvedKeys = {};
   var html5QrCode = null;
   var lastScanTime = 0;
   var lastScanCode = null;
@@ -354,9 +372,18 @@
       + '<label for="receivedByInput">Received By</label>'
       + '<input type="text" id="receivedByInput" placeholder="Type your name" value="' + escapeHtml(receivedByValue) + '">'
       + '</div>';
+    // Items already flagged "missing" back at picking don't need a
+    // second confirmation here — that discrepancy is already logged on
+    // the picker's side. Everything else has to be explicitly resolved
+    // (confirmed correct, or reported with a real count) before Finish
+    // unlocks, so a blank-scroll-through can't slip past as "all good."
+    var requiredKeys = expected.items.filter(function(it){ return it.status !== 'missing'; }).map(itemKey);
+    var unresolvedCount = requiredKeys.filter(function(k){ return !resolvedKeys[k]; }).length;
+
     html += '<div class="expected-card">';
     expected.items.forEach(function(item){
-      var scanned = scannedCounts[itemKey(item)] || 0;
+      var key = itemKey(item);
+      var scanned = scannedCounts[key] || 0;
       var expectedQty = item.pickedQty;
       var thumb = item.imageUrl
         ? '<img class="item-thumb" src="' + escapeHtml(item.imageUrl) + '" alt="">'
@@ -375,17 +402,23 @@
         return;
       }
 
+      var resolved = !!resolvedKeys[key];
       var cls = scanned >= expectedQty && expectedQty > 0 ? 'complete' : (scanned > 0 ? 'scanning' : '');
-      html += '<div class="item-row">'
+      html += '<div class="item-row' + (resolved ? '' : ' unresolved') + '">'
         + thumb
         + '<span class="item-title">' + escapeHtml(item.title) + '</span>'
-        + '<button class="item-count ' + cls + '" data-manual-key="' + escapeHtml(itemKey(item)) + '" data-manual-title="' + escapeHtml(item.title) + '">' + scanned + ' / ' + expectedQty + '</button>'
+        + '<button class="item-count ' + cls + '" data-manual-key="' + escapeHtml(key) + '" data-manual-title="' + escapeHtml(item.title) + '">' + scanned + ' / ' + expectedQty + '</button>'
+        + '<button class="confirm-btn' + (resolved ? ' done' : '') + '" data-confirm-key="' + escapeHtml(key) + '" data-confirm-qty="' + expectedQty + '" title="Confirm this item was received as expected">' + (resolved ? '✓' : '☐') + '</button>'
         + '</div>';
     });
     html += '</div>';
-    html += '<div class="manual-hint">Tap any count to type it in by hand if scanning isn\'t cooperating</div>';
+    html += '<div class="manual-hint">Scan each item, or tap ☐ to confirm the count shown is correct, or tap the number to type in what you actually counted</div>';
     html += '<button class="scan-btn" id="scanBtn">📷 Scan Items</button>';
-    html += '<button class="finish-btn" id="finishBtn">✓ Finish Receiving Check</button>';
+    if(unresolvedCount > 0){
+      html += '<button class="finish-btn pending" id="finishBtn" disabled>⚠ Confirm ' + unresolvedCount + ' more item' + (unresolvedCount === 1 ? '' : 's') + ' before finishing</button>';
+    } else {
+      html += '<button class="finish-btn" id="finishBtn">✓ Finish Receiving Check</button>';
+    }
     main.innerHTML = html;
     document.getElementById('scanBtn').addEventListener('click', openScanner);
     document.querySelectorAll('[data-manual-key]').forEach(function(btn){
@@ -401,9 +434,28 @@
           return;
         }
         scannedCounts[key] = num;
+        resolvedKeys[key] = true;
         render();
       });
     });
+    document.querySelectorAll('[data-confirm-key]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var key = btn.getAttribute('data-confirm-key');
+        var qty = parseInt(btn.getAttribute('data-confirm-qty'), 10) || 0;
+        // Fast path for "I looked, the count's right" without scanning
+        // or typing — still an explicit tap, still logged as a real
+        // confirmation, just faster for the common case.
+        scannedCounts[key] = qty;
+        resolvedKeys[key] = true;
+        render();
+      });
+    });
+    // Always bind the click handler, even while the button shows
+    // disabled — native disabled buttons already block real taps, but
+    // the actual protection is the unresolved-items check inside
+    // finishCheck() itself, so it has to run for real if this ever gets
+    // triggered some other way (e.g. the disabled attribute getting
+    // stripped via devtools).
     document.getElementById('finishBtn').addEventListener('click', finishCheck);
     document.getElementById('receivedByInput').addEventListener('input', function(e){
       receivedByValue = e.target.value;
@@ -506,6 +558,7 @@
 
     var key = itemKey(matchedItem);
     scannedCounts[key] = (scannedCounts[key] || 0) + 1;
+    resolvedKeys[key] = true;
     document.getElementById('scanProgressLabel').textContent =
       matchedItem.title + ': ' + scannedCounts[key] + ' of ' + matchedItem.pickedQty;
     playScanFeedback();
@@ -513,6 +566,16 @@
   }
 
   function finishCheck(){
+    // Belt-and-suspenders: the button itself is disabled while items are
+    // unresolved, but this is the actual gate that decides whether a
+    // submission is allowed through, so it has to hold even if the
+    // button's disabled state is ever bypassed.
+    var requiredKeys = expected.items.filter(function(it){ return it.status !== 'missing'; }).map(itemKey);
+    var stillUnresolved = requiredKeys.filter(function(k){ return !resolvedKeys[k]; });
+    if(stillUnresolved.length > 0){
+      alert('Confirm or report every item before finishing — ' + stillUnresolved.length + ' item' + (stillUnresolved.length === 1 ? ' still needs' : 's still need') + ' a check.');
+      return;
+    }
     var receivedBy = (document.getElementById('receivedByInput').value || '').trim();
     if(!receivedBy){
       alert('Enter your name in "Received By" before finishing.');
