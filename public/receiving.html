@@ -23,6 +23,9 @@
     --bad:#E14B3D;
     --bad-tint:#FCE7E5;
     --radius:16px;
+    --shadow-sm: 0 1px 3px rgba(24,43,58,0.06), 0 1px 2px rgba(24,43,58,0.08);
+    --shadow-md: 0 4px 14px rgba(24,43,58,0.09), 0 2px 4px rgba(24,43,58,0.06);
+    --shadow-lg: 0 10px 30px rgba(24,43,58,0.14), 0 4px 10px rgba(24,43,58,0.08);
   }
   *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
   html,body{background:var(--bg); color:var(--navy); font-family:'Inter',sans-serif; min-height:100%;}
@@ -72,8 +75,10 @@
     display:flex; align-items:center; gap:12px;
     background:var(--teal-tint); border:1px solid rgba(43,191,170,0.35);
     border-radius:var(--radius); padding:14px 16px; margin-bottom:14px;
+    box-shadow: var(--shadow-sm);
   }
-  .eta-card.pending{ background:var(--card-2); border-color:var(--line); }
+  .eta-card.live{ box-shadow: var(--shadow-md), 0 0 0 1px rgba(43,191,170,0.15); }
+  .eta-card.pending{ background:var(--card-2); border-color:var(--line); box-shadow:none; }
   .eta-dot{ width:10px; height:10px; border-radius:50%; background:var(--dim); flex-shrink:0; }
   .eta-dot.live{ background:var(--teal); box-shadow:0 0 0 4px rgba(43,191,170,0.18); }
   .eta-label{ font-family:'Poppins',sans-serif; font-weight:700; font-size:14.5px; color:var(--navy); }
@@ -88,6 +93,7 @@
   .received-by-field{
     background:var(--card); border:1.5px solid var(--teal); border-radius:var(--radius);
     padding:14px 16px; margin-bottom:14px;
+    box-shadow: var(--shadow-sm), 0 0 0 3px var(--teal-tint);
   }
   .received-by-field label{
     display:block; font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700;
@@ -103,6 +109,7 @@
   .expected-card{
     background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
     padding:8px 16px; margin-bottom:14px;
+    box-shadow: var(--shadow-md);
   }
   .item-row{
     display:flex; align-items:center; gap:12px;
@@ -113,19 +120,30 @@
     width:48px; height:48px; border-radius:10px; object-fit:cover;
     background:var(--card-2); flex-shrink:0; border:1px solid var(--line);
   }
+  /* .item-thumb's base background is --card-2 (light gray) — same gray
+     the unresolved row now uses. A placeholder icon with no override
+     just disappeared into its own row. Give it a real white circle +
+     its own shadow so it reads as a distinct object sitting on top of
+     the row, whatever the row's background is. */
   .item-thumb.placeholder{
     display:flex; align-items:center; justify-content:center;
-    font-size:18px; color:var(--dim);
+    font-size:19px; color:var(--dim);
+    background: #FFFFFF;
+    border-radius:50%;
+    box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--line);
+    border:none;
   }
   .item-title{ font-weight:600; font-size:14px; flex:1; }
   .item-count{
     font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13.5px;
     padding:5px 12px; border-radius:999px; background:var(--card-2); color:var(--dim);
     flex-shrink:0; border:none; cursor:pointer;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
   }
-  .item-count:active{ opacity:0.7; }
-  .item-count.complete{ background:var(--good-tint); color:var(--good); }
-  .item-count.scanning{ background:var(--orange-tint); color:var(--orange); }
+  .item-count:active{ transform: scale(0.94); box-shadow:none; }
+  .item-count.complete{ background:var(--good-tint); color:var(--good); box-shadow: var(--shadow-sm), 0 0 0 1px rgba(43,191,170,0.25); }
+  .item-count.scanning{ background:var(--orange-tint); color:var(--orange); box-shadow: var(--shadow-sm), 0 0 0 1px rgba(232,97,44,0.25); }
   .manual-hint{
     font-family:'JetBrains Mono', monospace; font-size:10.5px; color:var(--dim);
     text-align:center; margin-top:-4px; margin-bottom:4px;
@@ -145,24 +163,40 @@
     width:34px; height:34px; border-radius:50%; border:1.5px solid var(--line);
     background:var(--card); color:var(--dim); font-size:15px; flex-shrink:0; cursor:pointer;
     display:flex; align-items:center; justify-content:center; padding:0;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.12s ease, box-shadow 0.15s ease, background 0.15s ease;
   }
-  .confirm-btn:active{ opacity:0.7; }
-  .confirm-btn.done{ background:var(--good-tint); border-color:var(--good); color:var(--good); }
+  .confirm-btn:active{ transform: scale(0.88); }
+  .confirm-btn.done{
+    background: linear-gradient(135deg, var(--good) 0%, var(--teal-2, #22A895) 100%);
+    border-color:var(--good); color:#fff;
+    box-shadow: var(--shadow-sm), 0 0 0 4px rgba(43,191,170,0.16);
+  }
 
   .scan-btn{
-    width:100%; background:var(--navy); color:#fff; border:none;
+    width:100%; color:#fff; border:none;
+    background: linear-gradient(120deg, var(--navy) 0%, #1F3A4D 60%, #1B4E48 130%);
     font-family:'Poppins',sans-serif; font-weight:700; font-size:16px;
     padding:17px; border-radius:999px; margin-top:20px; cursor:pointer;
+    box-shadow: var(--shadow-md), 0 6px 16px rgba(24,43,58,0.25);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
   }
-  .scan-btn:active{ opacity:0.85; }
+  .scan-btn:active{ transform: scale(0.98) translateY(1px); box-shadow: var(--shadow-sm); }
 
   .finish-btn{
-    width:100%; background:var(--orange); color:#fff; border:none;
+    width:100%; color:#fff; border:none;
+    background: linear-gradient(120deg, var(--orange) 0%, #F0783F 100%);
     font-family:'Poppins',sans-serif; font-weight:700; font-size:15px;
     padding:15px; border-radius:999px; margin-top:12px; cursor:pointer;
+    box-shadow: var(--shadow-md), 0 6px 16px rgba(232,97,44,0.28);
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
   }
+  .finish-btn:active{ transform: scale(0.98) translateY(1px); }
   .finish-btn:disabled{ opacity:0.4; }
-  .finish-btn.pending{ background:var(--card-2); color:var(--dim); cursor:not-allowed; }
+  .finish-btn.pending{
+    background:var(--card-2); color:var(--dim); cursor:not-allowed;
+    box-shadow:none; transform:none;
+  }
 
   #scannerOverlay{
     position:fixed; inset:0; background:#000; z-index:200;
@@ -250,6 +284,34 @@
   var missedFrameCount = 0;
   var receivedByValue = '';
 
+  // General-purpose tap feedback for every clickable element on this
+  // page — same pattern as Route Board's tapFeedback(): one shared
+  // AudioContext (browsers cap how many concurrent contexts they'll
+  // allow, so don't spin up a new one per tap), a quick descending
+  // sine sweep, plus a short haptic buzz. Deliberately a softer/lower
+  // tone than playScanFeedback()'s sharp square-wave scanner beep —
+  // that one means "a barcode was just read," this one means "you
+  // tapped a button," and they shouldn't sound the same.
+  var _tapCtx = null;
+  function tapFeedback(){
+    try{
+      if(!_tapCtx) _tapCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if(_tapCtx.state === 'suspended') _tapCtx.resume();
+      var osc = _tapCtx.createOscillator();
+      var gain = _tapCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, _tapCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(660, _tapCtx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.18, _tapCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, _tapCtx.currentTime + 0.1);
+      osc.connect(gain);
+      gain.connect(_tapCtx.destination);
+      osc.start();
+      osc.stop(_tapCtx.currentTime + 0.1);
+    } catch(e){ /* Web Audio unsupported — tap still registers, just silent */ }
+    if(navigator.vibrate) navigator.vibrate(18);
+  }
+
   function itemKey(item){ return item.sku || item.title; }
   function escapeHtml(s){
     return (s==null?'':String(s)).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
@@ -319,7 +381,7 @@
     var url = etaInfo.fleetTrackerUrl + '/track.html?imei=' + encodeURIComponent(etaInfo.vanImei) +
       '&stop=' + encodeURIComponent(storeName) +
       '&routeBoardUrl=' + encodeURIComponent(ROUTE_BOARD_URL);
-    return '<a class="eta-track-link" href="' + escapeHtml(url) + '" target="_blank" rel="noopener">📍 Track ' + escapeHtml(etaInfo.van) + ' live</a>';
+    return '<a class="eta-track-link" data-tap-link href="' + escapeHtml(url) + '" target="_blank" rel="noopener">📍 Track ' + escapeHtml(etaInfo.van) + ' live</a>';
   }
 
   function etaCardHtml(){
@@ -426,9 +488,10 @@
       html += '<button class="finish-btn" id="finishBtn">✓ Finish Receiving Check</button>';
     }
     main.innerHTML = html;
-    document.getElementById('scanBtn').addEventListener('click', openScanner);
+    document.getElementById('scanBtn').addEventListener('click', function(){ tapFeedback(); openScanner(); });
     document.querySelectorAll('[data-manual-key]').forEach(function(btn){
       btn.addEventListener('click', function(){
+        tapFeedback();
         var key = btn.getAttribute('data-manual-key');
         var title = btn.getAttribute('data-manual-title');
         var current = scannedCounts[key] || 0;
@@ -446,6 +509,7 @@
     });
     document.querySelectorAll('[data-confirm-key]').forEach(function(btn){
       btn.addEventListener('click', function(){
+        tapFeedback();
         var key = btn.getAttribute('data-confirm-key');
         var qty = parseInt(btn.getAttribute('data-confirm-qty'), 10) || 0;
         // Fast path for "I looked, the count's right" without scanning
@@ -462,9 +526,12 @@
     // finishCheck() itself, so it has to run for real if this ever gets
     // triggered some other way (e.g. the disabled attribute getting
     // stripped via devtools).
-    document.getElementById('finishBtn').addEventListener('click', finishCheck);
+    document.getElementById('finishBtn').addEventListener('click', function(){ tapFeedback(); finishCheck(); });
     document.getElementById('receivedByInput').addEventListener('input', function(e){
       receivedByValue = e.target.value;
+    });
+    document.querySelectorAll('[data-tap-link]').forEach(function(link){
+      link.addEventListener('click', function(){ tapFeedback(); });
     });
   }
 
@@ -517,7 +584,7 @@
       });
     }
   }
-  document.getElementById('scannerCloseBtn').addEventListener('click', closeScanner);
+  document.getElementById('scannerCloseBtn').addEventListener('click', function(){ tapFeedback(); closeScanner(); });
 
   // A short, synthesized beep — no audio file needed. Plus a haptic
   // buzz where the browser supports it (Android Chrome does; iOS
