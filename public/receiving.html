@@ -276,9 +276,15 @@
   // Only makes sense once the route is actually out — a van "assigned"
   // to a route that hasn't started yet isn't necessarily on the road at
   // all, so this link only shows once etaInfo.started is true.
+  // Matched by IMEI, not van name — Bouncie's own nickname field doesn't
+  // reliably match Route Board's van dropdown labels (typos, missing
+  // words), so Route Board resolves the exact Bouncie vehicle server-side
+  // and hands us its IMEI directly. No vanImei means that van doesn't
+  // have a confirmed Bouncie match yet, so skip the link rather than
+  // send someone to a tracker page that can't find the vehicle.
   function vanTrackLinkHtml(){
-    if(!etaInfo || !etaInfo.started || !etaInfo.van || !etaInfo.fleetTrackerUrl) return '';
-    var url = etaInfo.fleetTrackerUrl + '/?van=' + encodeURIComponent(etaInfo.van);
+    if(!etaInfo || !etaInfo.started || !etaInfo.van || !etaInfo.vanImei || !etaInfo.fleetTrackerUrl) return '';
+    var url = etaInfo.fleetTrackerUrl + '/?imei=' + encodeURIComponent(etaInfo.vanImei);
     return '<a class="eta-track-link" href="' + escapeHtml(url) + '" target="_blank" rel="noopener">📍 Track ' + escapeHtml(etaInfo.van) + ' live</a>';
   }
 
