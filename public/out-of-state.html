@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hummus Fit — Receiving QR Codes</title>
+<title>Hummus Fit — Out of State Receiving QR Codes</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
   :root{
@@ -17,6 +17,12 @@
   .eyebrow{ font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:var(--dim); margin-bottom:4px; }
   h1{ font-family:'Poppins', sans-serif; font-weight:800; font-size:32px; margin-bottom:8px; }
   .hint{ color:var(--dim); font-size:14px; margin-bottom:26px; max-width:560px; line-height:1.6; }
+  .nav-links{ display:flex; gap:16px; margin-bottom:22px; }
+  .nav-links a{
+    font-family:'JetBrains Mono', monospace; font-size:11.5px; font-weight:700; text-decoration:none;
+    color:var(--dim); padding:7px 14px; border:1px solid var(--line); border-radius:999px;
+  }
+  .nav-links a.active{ color:var(--orange); border-color:var(--orange); background:rgba(232,97,44,0.06); }
   .grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:16px; }
   .store-card{
     background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; text-align:center;
@@ -26,12 +32,6 @@
   .store-card h2{ font-family:'Poppins', sans-serif; font-weight:700; font-size:17px; margin-bottom:12px; }
   .store-card img{ width:100%; max-width:200px; border-radius:8px; border:1px solid var(--line); }
   .store-card .print-hint{ font-family:'JetBrains Mono', monospace; font-size:10.5px; color:var(--dim); margin-top:10px; }
-  .nav-links{ display:flex; gap:16px; margin-bottom:22px; }
-  .nav-links a{
-    font-family:'JetBrains Mono', monospace; font-size:11.5px; font-weight:700; text-decoration:none;
-    color:var(--dim); padding:7px 14px; border:1px solid var(--line); border-radius:999px;
-  }
-  .nav-links a.active{ color:var(--orange); border-color:var(--orange); background:rgba(232,97,44,0.06); }
   a.reports-link{
     display:inline-block; margin-top:24px; color:var(--orange); font-weight:700;
     font-family:'JetBrains Mono', monospace; font-size:12px; text-decoration:none;
@@ -41,13 +41,13 @@
 <body>
 
 <div class="logo-mark"><img src="/assets/logo.png" alt="Hummus Fit"></div>
-<div class="eyebrow">Receiving</div>
-<h1>Store QR Codes</h1>
-<div class="hint">Print each one and stick it up permanently at that store's receiving area for scanning — or tap a store below to jump straight to its receiving check.</div>
+<div class="eyebrow">Receiving — Out of State</div>
+<h1>Out of State QR Codes</h1>
+<div class="hint">Print each one and give it to that account for their receiving area — or tap a store below to jump straight to its receiving check. Same accuracy tracking as the local stores, just for the Out of State board's accounts.</div>
 
 <div class="nav-links">
-  <a href="/" class="active">Local Stores</a>
-  <a href="/out-of-state">Out of State</a>
+  <a href="/">Local Stores</a>
+  <a href="/out-of-state" class="active">Out of State</a>
 </div>
 
 <div class="grid" id="grid"></div>
@@ -56,7 +56,12 @@
 <script>
   fetch('/api/stores').then(function(r){ return r.json(); }).then(function(data){
     var grid = document.getElementById('grid');
-    grid.innerHTML = data.stores.map(function(store){
+    var stores = data.outOfStateStores || [];
+    if(stores.length === 0){
+      grid.innerHTML = '<div style="color:var(--dim); font-family:\'JetBrains Mono\', monospace; font-size:13px;">No out-of-state accounts configured yet.</div>';
+      return;
+    }
+    grid.innerHTML = stores.map(function(store){
       return '<a class="store-card" href="/receiving/' + encodeURIComponent(store) + '">'
         + '<h2>' + store.replace(/</g,'&lt;') + '</h2>'
         + '<img src="/api/qr/' + encodeURIComponent(store) + '" alt="QR code for ' + store.replace(/</g,'&lt;') + '">'

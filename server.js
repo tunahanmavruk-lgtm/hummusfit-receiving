@@ -23,6 +23,21 @@ const STORES = [
   "Hicksville", "Selden", "Miller Place", "Lake Grove", "Holbrook", "Ronkonkoma",
 ];
 
+// The B2B / out-of-state customer list — same idea as STORES above,
+// just for the accounts on Route Board's Out of State board instead
+// of the local daily routes. The receiving-check flow underneath
+// (picked-summary, scanning, reports) already works identically for
+// these — it was never actually local-store-specific — this list is
+// the only real gap that kept them from getting their own QR codes.
+const OUT_OF_STATE_STORES = [
+  "Harrison", "Brookfield", "Fishkill", "Carmel", "Yorktown", "Nourish'd", "Rochelle",
+  "PWRBLD Philadelphia", "Ares Philadelphia", "Ares Hamilton",
+  "Wyomissing", "Bethlehem", "Meriden", "Orange", "Shelton", "Fairfield",
+  "New Castle", "Ares Sewell", "King of Gains", "Ares Mt Laurel",
+  "PWRBLD KOP", "PWRBLD Warrington",
+];
+const ALL_STORES = STORES.concat(OUT_OF_STATE_STORES);
+
 const DATA_FILE = path.join(__dirname, "reports.json");
 function loadReports() {
   try {
@@ -36,14 +51,14 @@ function saveReports(reports) {
 }
 
 app.get("/api/stores", (req, res) => {
-  res.json({ stores: STORES });
+  res.json({ stores: STORES, outOfStateStores: OUT_OF_STATE_STORES });
 });
 
 // Generates a real QR code image pointing straight at that store's
 // receiving-check page — print this and stick it up at the dock.
 app.get("/api/qr/:store", async (req, res) => {
   const store = req.params.store;
-  if (!STORES.includes(store)) return res.status(404).send("Unknown store");
+  if (!ALL_STORES.includes(store)) return res.status(404).send("Unknown store");
   const targetUrl = `${req.protocol}://${req.get("host")}/receiving/${encodeURIComponent(store)}`;
   try {
     const buffer = await QRCode.toBuffer(targetUrl, { width: 500, margin: 2 });
@@ -159,6 +174,9 @@ app.get("/receiving/:store", (req, res) => {
 });
 app.get("/reports", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "reports.html"));
+});
+app.get("/out-of-state", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "out-of-state.html"));
 });
 
 app.use(express.static(path.join(__dirname, "public")));
