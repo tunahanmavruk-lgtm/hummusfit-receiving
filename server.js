@@ -103,7 +103,7 @@ app.get("/api/expected/:store", async (req, res) => {
 // compares what they actually scanned against the expected picked
 // quantities, builds the report, and saves it permanently.
 app.post("/api/submit-receiving-check", (req, res) => {
-  const { store, orderName, pickedBy, receivedBy, expectedItems, scannedCounts } = req.body;
+  const { store, orderName, pickedBy, receivedBy, expectedItems, scannedCounts, extraScans } = req.body;
   if (!store || !expectedItems || !scannedCounts) {
     return res.status(400).json({ error: "store, expectedItems, and scannedCounts are required" });
   }
@@ -123,6 +123,19 @@ app.post("/api/submit-receiving-check", (req, res) => {
     };
   });
 
+  // Barcodes scanned that never matched anything on the order at all —
+  // wrong item, someone else's delivery, a shelf tag, etc. These have no
+  // "expected" counterpart in expectedItems, so they can't be folded into
+  // itemResults above; they get their own list instead, and they count
+  // toward the error rate the same way a short/over count on a real item
+  // would — a wrong item showing up is exactly as much of a receiving
+  // discrepancy as a missing one.
+  const extraItems = Object.keys(extraScans || {})
+    .filter((code) => (extraScans[code] || 0) > 0)
+    .map((code) => ({ code, qty: extraScans[code] }));
+  const extraQtyTotal = extraItems.reduce((sum, e) => sum + e.qty, 0);
+  totalDiscrepant += extraQtyTotal;
+
   const errorPercent = totalExpected > 0 ? Math.round((totalDiscrepant / totalExpected) * 1000) / 10 : 0;
 
   const report = {
@@ -133,6 +146,7 @@ app.post("/api/submit-receiving-check", (req, res) => {
     receivedBy: receivedBy || "Unknown",
     submittedAt: new Date().toISOString(),
     items: itemResults,
+    extraItems,
     hasErrors: totalDiscrepant > 0,
     errorPercent,
   };

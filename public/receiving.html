@@ -231,6 +231,35 @@
   }
   .result-banner.good{ background:var(--good-tint); color:var(--good); }
   .result-banner.bad{ background:var(--bad-tint); color:var(--bad); }
+
+  /* Persistent "extra / wrong item" card — the one thing the old flow
+     never gave a store employee: a place to actually SEE what got
+     scanned that wasn't on the order, after the one-time toast is gone. */
+  .extra-card{
+    background:var(--orange-tint); border:1px solid rgba(232,97,44,0.3); border-radius:var(--radius);
+    padding:8px 16px; margin-bottom:14px; box-shadow: var(--shadow-sm);
+  }
+  .extra-card-title{
+    font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:700;
+    text-transform:uppercase; letter-spacing:0.08em; color:var(--orange);
+    padding:10px 0 6px;
+  }
+  .extra-row{
+    display:flex; align-items:center; gap:12px;
+    padding:10px 0; border-top:1px solid rgba(232,97,44,0.22);
+  }
+  .extra-row:first-of-type{ border-top:none; }
+  .extra-code{ font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px; flex:1; word-break:break-all; }
+  .extra-qty{
+    font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13px;
+    color:var(--orange); flex-shrink:0;
+  }
+  .extra-remove{
+    width:26px; height:26px; border-radius:50%; border:1.5px solid rgba(232,97,44,0.35);
+    background:#fff; color:var(--orange); font-size:13px; flex-shrink:0; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; padding:0;
+  }
+  .extra-remove:active{ transform:scale(0.9); }
 </style>
 </head>
 <body>
@@ -272,6 +301,15 @@
   var expected = null;
   var etaInfo = null;
   var scannedCounts = {};
+  // Barcodes that got scanned but don't match anything on this delivery
+  // — wrong item, someone else's item, a shelf tag, etc. Kept separate
+  // from scannedCounts (which is only ever real expected-item counts)
+  // so the two never get confused when building the report. Rendered
+  // as its own persistent card below (see extraItemsHtml()) — previously
+  // this only ever showed as a toast at the moment of the scan, so a
+  // store employee who wasn't staring at the screen at that exact
+  // second had no way to ever see it again.
+  var extraScans = {};
   // Explicit "this item was actually checked" flag, separate from the
   // count itself — a 0 count is a legitimate "reported missing," but an
   // item nobody ever touched has no business looking the same. Finish
@@ -432,6 +470,26 @@
     return '<div class="picker-avatar placeholder">' + escapeHtml(initials) + '</div>';
   }
 
+  // Renders as its own orange card right under the expected-items list —
+  // stays on screen for the rest of the check (and gets sent up with the
+  // report, see finishCheck()), instead of vanishing the instant the
+  // scan-progress toast text changes to the next thing.
+  function extraItemsHtml(){
+    var codes = Object.keys(extraScans);
+    if(codes.length === 0) return '';
+    var html = '<div class="extra-card">';
+    html += '<div class="extra-card-title">⚠ Scanned but not on this order</div>';
+    codes.forEach(function(code){
+      html += '<div class="extra-row">'
+        + '<span class="extra-code">' + escapeHtml(code) + '</span>'
+        + '<span class="extra-qty">×' + extraScans[code] + '</span>'
+        + '<button class="extra-remove" data-remove-extra="' + escapeHtml(code) + '" title="Remove — scanned by mistake">✕</button>'
+        + '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
   function render(){
     var main = document.getElementById('mainContent');
     var html = etaCardHtml();
@@ -480,6 +538,7 @@
         + '</div>';
     });
     html += '</div>';
+    html += extraItemsHtml();
     html += '<div class="manual-hint">Scan each item, or tap ☐ to confirm the count shown is correct, or tap the number to type in what you actually counted</div>';
     html += '<button class="scan-btn" id="scanBtn">📷 Scan Items</button>';
     if(unresolvedCount > 0){
@@ -532,6 +591,14 @@
     });
     document.querySelectorAll('[data-tap-link]').forEach(function(link){
       link.addEventListener('click', function(){ tapFeedback(); });
+    });
+    document.querySelectorAll('[data-remove-extra]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        tapFeedback();
+        var code = btn.getAttribute('data-remove-extra');
+        delete extraScans[code];
+        render();
+      });
     });
   }
 
@@ -623,9 +690,10 @@
 
     var matchedItem = expected.items.find(function(i){ return (i.sku || '') === scanned; });
     if(!matchedItem){
-      scannedCounts['__unexpected__' + scanned] = (scannedCounts['__unexpected__' + scanned] || 0) + 1;
+      extraScans[scanned] = (extraScans[scanned] || 0) + 1;
       document.getElementById('scanProgressLabel').textContent = 'Scanned something not on this delivery — noted as extra';
       playScanFeedback();
+      render();
       return;
     }
 
@@ -667,6 +735,7 @@
         receivedBy: receivedBy,
         expectedItems: expected.items,
         scannedCounts: scannedCounts,
+        extraScans: extraScans,
       })
     })
       .then(function(r){ return r.json(); })

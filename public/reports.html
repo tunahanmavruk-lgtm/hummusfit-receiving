@@ -105,6 +105,13 @@
         var label = i.diff < 0 ? (Math.abs(i.diff) + ' short') : ('+' + i.diff + ' extra');
         return '<div class="discrepancy-row"><span>' + i.title.replace(/</g,'&lt;') + '</span><span class="' + cls + '">' + label + ' (expected ' + i.expectedFromPicking + ', got ' + i.actuallyReceived + ')</span></div>';
       }).join('');
+      // Barcodes the receiving employee scanned that weren't on the order
+      // at all — not a short/over count on a real line item, so they
+      // never show up in r.items above. Old reports (submitted before
+      // this fix shipped) won't have extraItems at all — guard for that.
+      var extraRows = (r.extraItems || []).map(function(e){
+        return '<div class="discrepancy-row"><span>Wrong / extra item — barcode ' + String(e.code).replace(/</g,'&lt;') + '</span><span class="diff-extra">×' + e.qty + ' not on order</span></div>';
+      }).join('');
 
       return '<div class="report-card">'
         + '<div class="report-top">'
@@ -113,6 +120,7 @@
         + '<div class="error-badge ' + (r.hasErrors ? 'bad' : 'good') + '">' + (r.hasErrors ? r.errorPercent + '% error' : '✓ Clean') + '</div>'
         + '</div>'
         + rows
+        + extraRows
         + '</div>';
     }).join('');
   }
