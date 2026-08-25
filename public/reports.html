@@ -110,7 +110,7 @@
       // never show up in r.items above. Old reports (submitted before
       // this fix shipped) won't have extraItems at all — guard for that.
       var extraRows = (r.extraItems || []).map(function(e){
-        return '<div class="discrepancy-row"><span>Wrong / extra item — barcode ' + String(e.code).replace(/</g,'&lt;') + '</span><span class="diff-extra">×' + e.qty + ' not on order</span></div>';
+        return '<div class="discrepancy-row"><span>Wrong / extra item — ' + String(e.code).replace(/</g,'&lt;') + '</span><span class="diff-extra">×' + e.qty + ' not on order</span></div>';
       }).join('');
 
       return '<div class="report-card">'
