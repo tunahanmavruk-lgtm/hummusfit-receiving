@@ -37,8 +37,17 @@
     font-family:'JetBrains Mono', monospace; font-size:12px; text-decoration:none;
   }
 </style>
+<link rel="stylesheet" href="/hf-logistics-theme.css?v=1">
 </head>
-<body>
+<body class="page-receiving-directory page-oos-directory">
+
+<nav class="hf-appbar" aria-label="HF Logistics applications">
+  <a class="hf-appbar-brand" href="https://logistics.myhummusfit.com/" aria-label="Back to HF Logistics"><span class="hf-logo-frame"><img src="/assets/logo.png" alt="Hummus Fit"></span><span><b>HF Logistics</b><small>Receiving operations</small></span></a>
+  <div class="hf-appbar-links"><a href="https://hummusfit-route-board-production.up.railway.app/">Route board</a><a href="/">Store receiving</a><a class="active" href="/out-of-state">Out-of-state</a><a href="/reports">Accuracy reports</a></div>
+  <a class="hf-hub-link" href="https://logistics.myhummusfit.com/">Open logistics hub <span aria-hidden="true">↗</span></a>
+</nav>
+
+<section class="hf-page-intro">
 
 <div class="logo-mark"><img src="/assets/logo.png" alt="Hummus Fit"></div>
 <div class="eyebrow">Receiving — Out of State</div>
@@ -49,9 +58,10 @@
   <a href="/">Local Stores</a>
   <a href="/out-of-state" class="active">Out of State</a>
 </div>
+</section>
 
-<div class="grid" id="grid"></div>
-<a class="reports-link" href="/reports">→ View the live Delivery Accuracy report</a>
+<main class="hf-directory-main"><div class="grid" id="grid"></div>
+<a class="reports-link" href="/reports">View the live Delivery Accuracy report →</a></main>
 
 <script>
   fetch('/api/stores').then(function(r){ return r.json(); }).then(function(data){
