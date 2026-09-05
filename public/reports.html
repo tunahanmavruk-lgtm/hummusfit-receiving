@@ -77,7 +77,7 @@
   <div class="filter-tabs">
     <button class="filter-tab active" data-filter="all">All Reports</button>
     <button class="filter-tab" data-filter="errors">Errors Only</button>
-    <button class="filter-tab" id="clearBtn" style="margin-left:auto; color:var(--bad); border-color:var(--bad);">🗑 Clear Reports</button>
+    <button class="filter-tab" id="clearBtn" hidden style="margin-left:auto; color:var(--bad); border-color:var(--bad);">🗑 Clear Reports</button>
   </div>
   <div id="content" class="empty-state">Loading…</div>
 </main>
@@ -163,13 +163,18 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ store: store.trim() })
     })
-      .then(function(r){ return r.json(); })
+      .then(function(r){ return r.json().then(function(data){ if(!r.ok) throw new Error(data.error || 'Management access required'); return data; }); })
       .then(function(result){
         alert('Cleared ' + result.removed + ' report' + (result.removed === 1 ? '' : 's') + '.');
         load();
       })
       .catch(function(err){ alert('Could not clear: ' + err.message); });
   });
+
+  fetch('/api/admin-session')
+    .then(function(r){ return r.json(); })
+    .then(function(data){ document.getElementById('clearBtn').hidden = !data.canManageReports; })
+    .catch(function(){ document.getElementById('clearBtn').hidden = true; });
 
   load();
   setInterval(load, 30000);

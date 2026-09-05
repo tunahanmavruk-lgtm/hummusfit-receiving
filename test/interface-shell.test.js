@@ -33,3 +33,14 @@ test('keeps both QR directories connected to their original data source', () => 
   assert.match(read('public/index.html'), /fetch\('\/api\/stores'\)/);
   assert.match(read('public/out-of-state.html'), /data\.outOfStateStores/);
 });
+
+test('keeps receiving public while protecting report deletion behind HF Logistics', () => {
+  const server = read('server.js');
+  const reports = read('public/reports.html');
+  assert.match(server, /app\.post\("\/api\/submit-receiving-check",/);
+  assert.match(server, /app\.get\("\/auth\/hf-logistics"/);
+  assert.match(server, /app\.post\("\/api\/clear-reports", requireReportsManager/);
+  assert.match(server, /verifyLogisticsToken\(token, "reports\.manage"\)/);
+  assert.match(reports, /id="clearBtn" hidden/);
+  assert.match(reports, /fetch\('\/api\/admin-session'\)/);
+});

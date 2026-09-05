@@ -1,11 +1,88 @@
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const QRCode = require("qrcode");
 
 const app = express();
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
+const HF_LOGISTICS_HANDOFF_SECRET = process.env.HF_LOGISTICS_HANDOFF_SECRET || "";
+const HF_LOGISTICS_COOKIE = "hf_logistics_access";
+
+function decodeBase64Url(value) {
+  return Buffer.from(String(value || "").replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+
+function parseCookies(req) {
+  return String(req.get("cookie") || "").split(";").reduce((cookies, part) => {
+    const separator = part.indexOf("=");
+    if (separator < 0) return cookies;
+    const key = part.slice(0, separator).trim();
+    const value = part.slice(separator + 1).trim();
+    if (key) cookies[key] = decodeURIComponent(value);
+    return cookies;
+  }, {});
+}
+
+function verifyLogisticsToken(token, requiredScope) {
+  if (!HF_LOGISTICS_HANDOFF_SECRET || typeof token !== "string") return null;
+  const separator = token.lastIndexOf(".");
+  if (separator < 1) return null;
+  const payloadPart = token.slice(0, separator);
+  const signaturePart = token.slice(separator + 1);
+  const expected = crypto.createHmac("sha256", HF_LOGISTICS_HANDOFF_SECRET).update(payloadPart).digest();
+  const supplied = decodeBase64Url(signaturePart);
+  if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) return null;
+  try {
+    const payload = JSON.parse(decodeBase64Url(payloadPart).toString("utf8"));
+    if (!payload.sub || !Number.isFinite(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) return null;
+    if (!Array.isArray(payload.scope) || !payload.scope.includes(requiredScope)) return null;
+    return payload;
+  } catch (error) {
+    return null;
+  }
+}
+
+function reportsManager(req) {
+  return verifyLogisticsToken(parseCookies(req)[HF_LOGISTICS_COOKIE], "reports.manage");
+}
+
+function requireReportsManager(req, res, next) {
+  if (!HF_LOGISTICS_HANDOFF_SECRET) return res.status(503).json({ error: "Secure HF Logistics access is not configured" });
+  const identity = reportsManager(req);
+  if (!identity || !["owner", "administrator", "manager"].includes(identity.role)) {
+    return res.status(401).json({ error: "Open report administration from HF Logistics" });
+  }
+  req.hfLogisticsIdentity = identity;
+  next();
+}
+
+function safeReturnPath(value) {
+  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") ? value : "/reports";
+}
+
+app.get("/auth/hf-logistics", (req, res) => {
+  const token = String(req.query.token || "");
+  const identity = verifyLogisticsToken(token, "reports.manage");
+  if (!HF_LOGISTICS_HANDOFF_SECRET) return res.status(503).send("Secure HF Logistics access is not configured.");
+  if (!identity || !["owner", "administrator", "manager"].includes(identity.role)) {
+    return res.status(403).send("This HF Logistics management link is invalid or expired.");
+  }
+  res.cookie(HF_LOGISTICS_COOKIE, token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    maxAge: 12 * 60 * 60 * 1000,
+    path: "/",
+  });
+  res.redirect(302, safeReturnPath(req.query.returnTo));
+});
+
+app.get("/api/admin-session", (req, res) => {
+  const identity = reportsManager(req);
+  res.json({ canManageReports: Boolean(identity && ["owner", "administrator", "manager"].includes(identity.role)) });
+});
 
 // The one and only connection to the Route Board app — a read-only
 // call to find out what was actually picked for a store, so receiving
@@ -175,7 +252,7 @@ app.get("/api/reports/:store", (req, res) => {
 // everything, if store is omitted/"all". Reports otherwise persist
 // forever with no automatic expiration — this is the only way they
 // get removed.
-app.post("/api/clear-reports", (req, res) => {
+app.post("/api/clear-reports", requireReportsManager, (req, res) => {
   const { store } = req.body;
   const before = loadReports();
   const after = store && store !== "all" ? before.filter((r) => r.store !== store) : [];
