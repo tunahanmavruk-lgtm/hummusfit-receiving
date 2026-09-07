@@ -278,10 +278,9 @@
 </head>
 <body class="page-receiving-check">
 
-<nav class="hf-appbar" aria-label="HF Logistics applications">
-  <a class="hf-appbar-brand" href="https://logistics.myhummusfit.com/" aria-label="Back to HF Logistics"><span class="hf-logo-frame"><img src="/assets/logo.png" alt="Hummus Fit"></span><span><b>HF Logistics</b><small>Receiving check</small></span></a>
-  <div class="hf-appbar-links"><a href="https://hummusfit-route-board-production.up.railway.app/">Route board</a><a class="active" href="/">Store receiving</a><a href="/out-of-state">Out-of-state</a><a href="/reports">Accuracy reports</a></div>
-  <a class="hf-hub-link" href="https://logistics.myhummusfit.com/">Open logistics hub <span aria-hidden="true">↗</span></a>
+<nav class="hf-appbar store-only-appbar" aria-label="Hummus Fit store receiving">
+  <span class="hf-appbar-brand"><span class="hf-logo-frame"><img src="/assets/logo.png" alt="Hummus Fit"></span><span><b>Store Delivery</b><small>Secure receiving check</small></span></span>
+  <span class="store-access-label">This store only</span>
 </nav>
 
 <header>
@@ -309,6 +308,7 @@
 <script>
 (function(){
   var storeName = decodeURIComponent(location.pathname.split('/receiving/')[1] || '');
+  var storeAccessToken = new URLSearchParams(location.search).get('access') || '';
   document.getElementById('storeName').textContent = storeName || 'Unknown Store';
 
   var todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'America/New_York' });
@@ -379,11 +379,11 @@
     // Kick off in parallel — the ETA lookup goes straight to Route Board
     // (cross-origin) so it doesn't hold up the expected-items fetch, and
     // a failure here should never block the receiving check itself.
-    var etaPromise = fetch(ROUTE_BOARD_URL + '/api/store-eta/' + encodeURIComponent(storeName))
+    var etaPromise = fetch('/api/eta/' + encodeURIComponent(storeName) + '?access=' + encodeURIComponent(storeAccessToken))
       .then(function(r){ return r.ok ? r.json() : null; })
       .catch(function(){ return null; });
 
-    fetch('/api/expected/' + encodeURIComponent(storeName))
+    fetch('/api/expected/' + encodeURIComponent(storeName) + '?access=' + encodeURIComponent(storeAccessToken))
       .then(function(r){ return r.json().then(function(data){ return { ok: r.ok, data: data }; }); })
       .then(function(result){
         var main = document.getElementById('mainContent');
@@ -435,11 +435,8 @@
   // bookmarks the link. Never shown once delivered — that's redundant
   // once it's here, and matches what /track.html would show anyway.
   function vanTrackLinkHtml(){
-    if(!etaInfo || !etaInfo.started || etaInfo.delivered || !etaInfo.van || !etaInfo.vanImei || !etaInfo.fleetTrackerUrl) return '';
-    var url = etaInfo.fleetTrackerUrl + '/track.html?imei=' + encodeURIComponent(etaInfo.vanImei) +
-      '&stop=' + encodeURIComponent(storeName) +
-      '&routeBoardUrl=' + encodeURIComponent(ROUTE_BOARD_URL);
-    return '<a class="eta-track-link" data-tap-link href="' + escapeHtml(url) + '" target="_blank" rel="noopener">📍 Track ' + escapeHtml(etaInfo.van) + ' live</a>';
+    if(!etaInfo || !etaInfo.started || etaInfo.delivered || !etaInfo.van || !etaInfo.trackUrl) return '';
+    return '<a class="eta-track-link" data-tap-link href="' + escapeHtml(etaInfo.trackUrl) + '" target="_blank" rel="noopener noreferrer">📍 Track ' + escapeHtml(etaInfo.van) + ' live</a>';
   }
 
   function etaCardHtml(){
@@ -773,6 +770,7 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        access: storeAccessToken,
         store: storeName,
         orderName: expected.orderName,
         pickedBy: expected.pickedBy,

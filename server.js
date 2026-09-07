@@ -8,6 +8,7 @@ const app = express();
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const HF_LOGISTICS_HANDOFF_SECRET = process.env.HF_LOGISTICS_HANDOFF_SECRET || "";
+const STORE_TRACKING_SECRET = process.env.STORE_TRACKING_SECRET || "";
 const HF_LOGISTICS_COOKIE = "hf_logistics_access";
 
 function decodeBase64Url(value) {
@@ -56,6 +57,50 @@ function requireReportsManager(req, res, next) {
   }
   req.hfLogisticsIdentity = identity;
   next();
+}
+
+function signStoreToken(store) {
+  if (!STORE_TRACKING_SECRET) return null;
+  const payloadPart = Buffer.from(JSON.stringify({ v: 1, scope: "receiving.store", store }), "utf8").toString("base64url");
+  const signature = crypto.createHmac("sha256", STORE_TRACKING_SECRET).update(payloadPart).digest("base64url");
+  return `${payloadPart}.${signature}`;
+}
+
+function verifyStoreToken(token, expectedStore) {
+  if (!STORE_TRACKING_SECRET || typeof token !== "string") return null;
+  const separator = token.lastIndexOf(".");
+  if (separator < 1) return null;
+  const payloadPart = token.slice(0, separator);
+  const supplied = Buffer.from(token.slice(separator + 1), "base64url");
+  const expected = crypto.createHmac("sha256", STORE_TRACKING_SECRET).update(payloadPart).digest();
+  if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf8"));
+    if (payload.v !== 1 || payload.scope !== "receiving.store" || payload.store !== expectedStore) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function requireStoreAccess(req, res, next) {
+  const store = req.params.store || req.body?.store;
+  const access = String(req.query.access || req.body?.access || "");
+  if (!ALL_STORES.includes(store)) return res.status(404).json({ error: "Unknown store" });
+  if (!verifyStoreToken(access, store)) {
+    return res.status(403).json({ error: "This store receiving link is invalid. Ask Hummus Fit for a new QR code." });
+  }
+  next();
+}
+
+function signVehicleTrackingToken(store, imei) {
+  if (!STORE_TRACKING_SECRET) return null;
+  const payloadPart = Buffer.from(JSON.stringify({
+    v: 1, scope: "store.vehicle.track", store, imei,
+    exp: Math.floor(Date.now() / 1000) + (12 * 60 * 60),
+  }), "utf8").toString("base64url");
+  const signature = crypto.createHmac("sha256", STORE_TRACKING_SECRET).update(payloadPart).digest("base64url");
+  return `${payloadPart}.${signature}`;
 }
 
 function safeReturnPath(value) {
@@ -127,16 +172,18 @@ function saveReports(reports) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(reports, null, 2));
 }
 
-app.get("/api/stores", (req, res) => {
+app.get("/api/stores", requireReportsManager, (req, res) => {
   res.json({ stores: STORES, outOfStateStores: OUT_OF_STATE_STORES });
 });
 
 // Generates a real QR code image pointing straight at that store's
 // receiving-check page — print this and stick it up at the dock.
-app.get("/api/qr/:store", async (req, res) => {
+app.get("/api/qr/:store", requireReportsManager, async (req, res) => {
   const store = req.params.store;
   if (!ALL_STORES.includes(store)) return res.status(404).send("Unknown store");
-  const targetUrl = `${req.protocol}://${req.get("host")}/receiving/${encodeURIComponent(store)}`;
+  const access = signStoreToken(store);
+  if (!access) return res.status(503).send("Secure store QR access is not configured");
+  const targetUrl = `${req.protocol}://${req.get("host")}/receiving/${encodeURIComponent(store)}?access=${encodeURIComponent(access)}`;
   try {
     const buffer = await QRCode.toBuffer(targetUrl, { width: 500, margin: 2 });
     res.set("Content-Type", "image/png");
@@ -149,7 +196,7 @@ app.get("/api/qr/:store", async (req, res) => {
 // Pulls real "what was actually picked" data from Route Board — this
 // is the ground truth the receiving employee's scans get checked
 // against, not just the original order.
-app.get("/api/expected/:store", async (req, res) => {
+app.get("/api/expected/:store", requireStoreAccess, async (req, res) => {
   const store = req.params.store;
   try {
     const r = await fetch(`${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`);
@@ -176,10 +223,31 @@ app.get("/api/expected/:store", async (req, res) => {
   }
 });
 
+app.get("/api/eta/:store", requireStoreAccess, async (req, res) => {
+  const store = req.params.store;
+  try {
+    const upstream = await fetch(`${ROUTE_BOARD_URL}/api/store-eta/${encodeURIComponent(store)}`);
+    const data = await upstream.json();
+    if (!upstream.ok) return res.status(upstream.status).json({ error: data.error || "Delivery status unavailable" });
+    const fleetTrackerUrl = data.fleetTrackerUrl;
+    const vanImei = data.vanImei;
+    delete data.fleetTrackerUrl;
+    delete data.vanImei;
+    if (data.started && !data.delivered && fleetTrackerUrl && vanImei) {
+      const trackingAccess = signVehicleTrackingToken(store, vanImei);
+      if (trackingAccess) data.trackUrl = `${fleetTrackerUrl}/track.html?access=${encodeURIComponent(trackingAccess)}`;
+    }
+    res.set("Cache-Control", "private, no-store");
+    res.json(data);
+  } catch {
+    res.status(502).json({ error: "Could not load delivery status" });
+  }
+});
+
 // Called once the receiving employee finishes scanning everything —
 // compares what they actually scanned against the expected picked
 // quantities, builds the report, and saves it permanently.
-app.post("/api/submit-receiving-check", (req, res) => {
+app.post("/api/submit-receiving-check", requireStoreAccess, (req, res) => {
   const { store, orderName, pickedBy, receivedBy, expectedItems, scannedCounts, extraScans } = req.body;
   if (!store || !expectedItems || !scannedCounts) {
     return res.status(400).json({ error: "store, expectedItems, and scannedCounts are required" });
@@ -236,14 +304,14 @@ app.post("/api/submit-receiving-check", (req, res) => {
 });
 
 // For the picking-crew dashboard — every report, most recent first.
-app.get("/api/reports", (req, res) => {
+app.get("/api/reports", requireReportsManager, (req, res) => {
   const reports = loadReports();
   res.json({ reports: reports.slice().reverse() });
 });
 
 // History for one specific store, most recent first — for the
 // per-location trend view.
-app.get("/api/reports/:store", (req, res) => {
+app.get("/api/reports/:store", requireReportsManager, (req, res) => {
   const reports = loadReports().filter((r) => r.store === req.params.store);
   res.json({ reports: reports.slice().reverse() });
 });
@@ -261,14 +329,24 @@ app.post("/api/clear-reports", requireReportsManager, (req, res) => {
 });
 
 app.get("/receiving/:store", (req, res) => {
+  if (!ALL_STORES.includes(req.params.store) || !verifyStoreToken(String(req.query.access || ""), req.params.store)) {
+    return res.status(403).type("html").send("<!doctype html><meta name=viewport content='width=device-width'><title>Secure receiving link required</title><style>body{font-family:Arial,sans-serif;background:#edf5f2;color:#173b38;display:grid;place-items:center;min-height:100vh;margin:0}.card{max-width:420px;margin:24px;padding:32px;border-radius:18px;background:white;box-shadow:0 18px 50px #174b4722;text-align:center}h1{font-size:24px}p{line-height:1.6;color:#667b78}</style><main class=card><h1>Secure receiving link required</h1><p>Please scan the current QR code supplied by Hummus Fit. This link cannot open another store’s orders.</p></main>");
+  }
+  res.set("Cache-Control", "private, no-store");
+  res.set("Referrer-Policy", "no-referrer");
   res.sendFile(path.join(__dirname, "public", "receiving.html"));
 });
-app.get("/reports", (req, res) => {
+app.get(["/reports", "/reports.html"], requireReportsManager, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "reports.html"));
 });
-app.get("/out-of-state", (req, res) => {
+app.get(["/out-of-state", "/out-of-state.html"], requireReportsManager, (req, res) => {
   res.sendFile(path.join(__dirname, "public", "out-of-state.html"));
 });
+
+app.get(["/", "/index.html"], requireReportsManager, (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+app.get("/receiving.html", (req, res) => res.status(404).send("Not found"));
 
 app.use(express.static(path.join(__dirname, "public")));
 
