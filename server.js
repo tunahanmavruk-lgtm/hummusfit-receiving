@@ -46,7 +46,9 @@ function verifyLogisticsToken(token, requiredScope) {
 }
 
 function reportsManager(req) {
-  return verifyLogisticsToken(parseCookies(req)[HF_LOGISTICS_COOKIE], "reports.manage");
+  const authorization = String(req.get("authorization") || "");
+  const bearer = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  return verifyLogisticsToken(bearer || parseCookies(req)[HF_LOGISTICS_COOKIE], "reports.manage");
 }
 
 function requireReportsManager(req, res, next) {

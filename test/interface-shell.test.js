@@ -51,6 +51,7 @@ test('locks management pages and APIs behind HF Logistics while store QR access 
   assert.match(server, /app\.get\("\/auth\/hf-logistics"/);
   assert.match(server, /app\.post\("\/api\/clear-reports", requireReportsManager/);
   assert.match(server, /verifyLogisticsToken\(token, "reports\.manage"\)/);
+  assert.match(server, /authorization\.startsWith\("Bearer "\)/);
   assert.match(reports, /id="clearBtn" hidden/);
   assert.match(reports, /fetch\('\/api\/admin-session'\)/);
 });
