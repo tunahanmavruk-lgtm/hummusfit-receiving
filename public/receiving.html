@@ -320,6 +320,7 @@
 
   var expected = null;
   var etaInfo = null;
+  var etaRefreshTimer = null;
   var scannedCounts = {};
   // Barcodes that got scanned but don't match anything on this delivery
   // — wrong item, someone else's item, a shelf tag, etc. Kept separate
@@ -375,13 +376,17 @@
     return (s==null?'':String(s)).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
   }
 
+  function fetchEta(){
+    return fetch('/api/eta/' + encodeURIComponent(storeName) + '?access=' + encodeURIComponent(storeAccessToken))
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .catch(function(){ return null; });
+  }
+
   function loadExpected(){
     // Kick off in parallel — the ETA lookup goes straight to Route Board
     // (cross-origin) so it doesn't hold up the expected-items fetch, and
     // a failure here should never block the receiving check itself.
-    var etaPromise = fetch('/api/eta/' + encodeURIComponent(storeName) + '?access=' + encodeURIComponent(storeAccessToken))
-      .then(function(r){ return r.ok ? r.json() : null; })
-      .catch(function(){ return null; });
+    var etaPromise = fetchEta();
 
     fetch('/api/expected/' + encodeURIComponent(storeName) + '?access=' + encodeURIComponent(storeAccessToken))
       .then(function(r){ return r.json().then(function(data){ return { ok: r.ok, data: data }; }); })
@@ -404,6 +409,14 @@
         etaPromise.then(function(eta){
           etaInfo = eta;
           render();
+          if(!etaRefreshTimer){
+            etaRefreshTimer = setInterval(function(){
+              fetchEta().then(function(nextEta){
+                etaInfo = nextEta;
+                if(expected) render();
+              });
+            }, 15000);
+          }
         });
       })
       .catch(function(err){
@@ -435,7 +448,7 @@
   // bookmarks the link. Never shown once delivered — that's redundant
   // once it's here, and matches what /track.html would show anyway.
   function vanTrackLinkHtml(){
-    if(!etaInfo || !etaInfo.started || etaInfo.delivered || !etaInfo.van || !etaInfo.trackUrl) return '';
+    if(!etaInfo || !etaInfo.started || !etaInfo.trackingAvailable || !etaInfo.van || !etaInfo.trackUrl) return '';
     return '<a class="eta-track-link" data-tap-link href="' + escapeHtml(etaInfo.trackUrl) + '" target="_blank" rel="noopener noreferrer">📍 Track ' + escapeHtml(etaInfo.van) + ' live</a>';
   }
 
@@ -446,6 +459,7 @@
       return '<div class="eta-card live"><span class="eta-dot live"></span><div>'
         + '<div class="eta-label">✓ Delivered' + (deliveredTime ? ' at ' + deliveredTime : '') + '</div>'
         + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + '</div>'
+        + vanTrackLinkHtml()
         + '</div></div>';
     }
     if(!etaInfo.started){

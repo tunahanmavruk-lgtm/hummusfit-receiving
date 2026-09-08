@@ -57,6 +57,7 @@ test('locks management pages and APIs behind HF Logistics while store QR access 
 });
 
 test('store receiving page exposes only its own order and signed vehicle tracking flow', () => {
+  const server = read('server.js');
   const html = read('public/receiving.html');
   assert.match(html, /This store only/);
   assert.match(html, /storeAccessToken/);
@@ -65,6 +66,9 @@ test('store receiving page exposes only its own order and signed vehicle trackin
   assert.doesNotMatch(html, />Route board</);
   assert.doesNotMatch(html, />Accuracy reports</);
   assert.doesNotMatch(html, /\/track\.html\?imei=/);
+  assert.match(html, /etaInfo\.trackingAvailable/);
+  assert.match(html, /setInterval[\s\S]*15000/);
+  assert.match(server, /data\.trackingAvailable/);
 });
 
 test('permanent store QR URLs upgrade to signed store-only sessions', () => {

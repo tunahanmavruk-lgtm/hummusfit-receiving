@@ -237,7 +237,7 @@ app.get("/api/eta/:store", requireStoreAccess, async (req, res) => {
     const vanImei = data.vanImei;
     delete data.fleetTrackerUrl;
     delete data.vanImei;
-    if (data.started && !data.delivered && fleetTrackerUrl && vanImei) {
+    if (data.started && data.trackingAvailable && fleetTrackerUrl && vanImei) {
       const trackingAccess = signVehicleTrackingToken(store, vanImei);
       if (trackingAccess) data.trackUrl = `${fleetTrackerUrl}/track.html?access=${encodeURIComponent(trackingAccess)}`;
     }
