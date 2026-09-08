@@ -66,3 +66,12 @@ test('store receiving page exposes only its own order and signed vehicle trackin
   assert.doesNotMatch(html, />Accuracy reports</);
   assert.doesNotMatch(html, /\/track\.html\?imei=/);
 });
+
+test('permanent store QR URLs upgrade to signed store-only sessions', () => {
+  const server = read('server.js');
+  assert.match(server, /const targetUrl = `\$\{req\.protocol\}:\/\/\$\{req\.get\("host"\)\}\/receiving\/\$\{encodeURIComponent\(store\)\}`/);
+  assert.match(server, /if \(!access\) \{/);
+  assert.match(server, /signStoreToken\(store\)/);
+  assert.match(server, /res\.redirect\(302, `\/receiving\/\$\{encodeURIComponent\(store\)\}\?access=/);
+  assert.match(server, /if \(!verifyStoreToken\(access, store\)\)/);
+});

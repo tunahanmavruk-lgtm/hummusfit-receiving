@@ -178,14 +178,16 @@ app.get("/api/stores", requireReportsManager, (req, res) => {
   res.json({ stores: STORES, outOfStateStores: OUT_OF_STATE_STORES });
 });
 
-// Generates a real QR code image pointing straight at that store's
-// receiving-check page — print this and stick it up at the dock.
+// Generates a permanent QR code for the store. The QR intentionally points
+// at the stable store URL instead of embedding a signature. On first open,
+// /receiving/:store upgrades it to a currently signed URL. That keeps every
+// printed code working if the signing secret changes while the signed URL
+// still scopes all API calls to exactly one store.
 app.get("/api/qr/:store", requireReportsManager, async (req, res) => {
   const store = req.params.store;
   if (!ALL_STORES.includes(store)) return res.status(404).send("Unknown store");
-  const access = signStoreToken(store);
-  if (!access) return res.status(503).send("Secure store QR access is not configured");
-  const targetUrl = `${req.protocol}://${req.get("host")}/receiving/${encodeURIComponent(store)}?access=${encodeURIComponent(access)}`;
+  if (!STORE_TRACKING_SECRET) return res.status(503).send("Secure store QR access is not configured");
+  const targetUrl = `${req.protocol}://${req.get("host")}/receiving/${encodeURIComponent(store)}`;
   try {
     const buffer = await QRCode.toBuffer(targetUrl, { width: 500, margin: 2 });
     res.set("Content-Type", "image/png");
@@ -331,7 +333,22 @@ app.post("/api/clear-reports", requireReportsManager, (req, res) => {
 });
 
 app.get("/receiving/:store", (req, res) => {
-  if (!ALL_STORES.includes(req.params.store) || !verifyStoreToken(String(req.query.access || ""), req.params.store)) {
+  const store = req.params.store;
+  if (!ALL_STORES.includes(store)) {
+    return res.status(404).type("html").send("<!doctype html><meta name=viewport content='width=device-width'><title>Store not found</title><style>body{font-family:Arial,sans-serif;background:#edf5f2;color:#173b38;display:grid;place-items:center;min-height:100vh;margin:0}.card{max-width:420px;margin:24px;padding:32px;border-radius:18px;background:white;box-shadow:0 18px 50px #174b4722;text-align:center}h1{font-size:24px}p{line-height:1.6;color:#667b78}</style><main class=card><h1>Store not found</h1><p>This receiving code does not match a Hummus Fit delivery location.</p></main>");
+  }
+
+  const access = String(req.query.access || "");
+  if (!access) {
+    const currentAccess = signStoreToken(store);
+    if (!currentAccess) {
+      return res.status(503).type("html").send("<!doctype html><meta name=viewport content='width=device-width'><title>Receiving temporarily unavailable</title><style>body{font-family:Arial,sans-serif;background:#edf5f2;color:#173b38;display:grid;place-items:center;min-height:100vh;margin:0}.card{max-width:420px;margin:24px;padding:32px;border-radius:18px;background:white;box-shadow:0 18px 50px #174b4722;text-align:center}h1{font-size:24px}p{line-height:1.6;color:#667b78}</style><main class=card><h1>Receiving temporarily unavailable</h1><p>Please contact Hummus Fit logistics and try this QR code again.</p></main>");
+    }
+    res.set("Cache-Control", "private, no-store");
+    return res.redirect(302, `/receiving/${encodeURIComponent(store)}?access=${encodeURIComponent(currentAccess)}`);
+  }
+
+  if (!verifyStoreToken(access, store)) {
     return res.status(403).type("html").send("<!doctype html><meta name=viewport content='width=device-width'><title>Secure receiving link required</title><style>body{font-family:Arial,sans-serif;background:#edf5f2;color:#173b38;display:grid;place-items:center;min-height:100vh;margin:0}.card{max-width:420px;margin:24px;padding:32px;border-radius:18px;background:white;box-shadow:0 18px 50px #174b4722;text-align:center}h1{font-size:24px}p{line-height:1.6;color:#667b78}</style><main class=card><h1>Secure receiving link required</h1><p>Please scan the current QR code supplied by Hummus Fit. This link cannot open another store’s orders.</p></main>");
   }
   res.set("Cache-Control", "private, no-store");
