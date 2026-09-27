@@ -3,9 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#245b57">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Receiving">
 <title>Hummus Fit — Receiving Check</title>
+<link rel="apple-touch-icon" href="/assets/receiving-icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="/receiving-policy.js"></script>
 <style>
   :root{
     --bg:#FFFFFF;
@@ -70,6 +76,17 @@
   .item-count.missing{
     background:var(--bad-tint); color:var(--bad); white-space:nowrap;
   }
+  .category-block{ margin-bottom:16px; }
+  .category-heading{
+    display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    margin:0 0 8px; padding:0 2px;
+  }
+  .category-heading strong{ display:block; font-family:'Poppins',sans-serif; font-size:14px; }
+  .category-heading small{ display:block; margin-top:2px; color:var(--dim); font-size:10px; line-height:1.35; }
+  .category-badge{ padding:5px 9px; border-radius:999px; background:var(--card-2); color:var(--dim); font:700 9px 'JetBrains Mono',monospace; white-space:nowrap; }
+  .category-block.retail .category-badge{ background:var(--teal-tint); color:var(--teal); }
+  .category-block.other .category-badge{ background:var(--orange-tint); color:var(--orange); }
+  .inventory-note{ grid-column:2 / -1; margin-top:2px; color:var(--dim); font-size:9px; line-height:1.35; }
 
   .eta-card{
     display:flex; align-items:center; gap:12px;
@@ -311,6 +328,14 @@
   var storeAccessToken = new URLSearchParams(location.search).get('access') || '';
   document.getElementById('storeName').textContent = storeName || 'Unknown Store';
 
+  var manifest = document.createElement('link');
+  manifest.rel = 'manifest';
+  manifest.href = '/manifest/' + encodeURIComponent(storeName) + '.webmanifest';
+  document.head.appendChild(manifest);
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', function(){ navigator.serviceWorker.register('/receiving-sw.js').catch(function(){}); });
+  }
+
   var todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'America/New_York' });
 
   // Route Board's public, CORS-enabled ETA lookup — same server this app
@@ -372,6 +397,12 @@
   }
 
   function itemKey(item){ return item.sku || item.title; }
+  function categoryForItem(item){
+    return window.HFReceivingPolicy ? window.HFReceivingPolicy.categoryForItem(item) : 'food';
+  }
+  function policyForItem(item){
+    return window.HFReceivingPolicy ? window.HFReceivingPolicy.buildReceivingPolicy(item) : { category:'food', inventoryPolicy:'food_existing_flow', projectedPosUnits:0, posInventoryWriteEnabled:false };
+  }
   function escapeHtml(s){
     return (s==null?'':String(s)).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
   }
@@ -555,11 +586,22 @@
     var requiredKeys = expected.items.filter(function(it){ return it.status !== 'missing'; }).map(itemKey);
     var unresolvedCount = requiredKeys.filter(function(k){ return !resolvedKeys[k]; }).length;
 
-    html += '<div class="expected-card">';
-    expected.items.forEach(function(item){
+    var categorySections = [
+      { key:'food', cls:'food', title:'Food delivery', note:'Current receiving and inventory process remains unchanged.', badge:'CURRENT FLOW' },
+      { key:'retail_essentials', cls:'retail', title:'Retail Essentials', note:'Received by case. POS unit conversion remains locked until the pilot is approved.', badge:'POS UNITS LATER' },
+      { key:'other_essentials', cls:'other', title:'Other Essentials', note:'Store supplies only. These items never enter POS inventory.', badge:'NO POS' }
+    ];
+    categorySections.forEach(function(section){
+      var sectionItems = expected.items.filter(function(item){ return categoryForItem(item) === section.key; });
+      if(!sectionItems.length) return;
+      html += '<section class="category-block ' + section.cls + '">'
+        + '<div class="category-heading"><div><strong>' + section.title + '</strong><small>' + section.note + '</small></div><span class="category-badge">' + section.badge + '</span></div>'
+        + '<div class="expected-card">';
+      sectionItems.forEach(function(item){
       var key = itemKey(item);
       var scanned = scannedCounts[key] || 0;
       var expectedQty = item.pickedQty;
+      var receivingPolicy = policyForItem(item);
       var thumb = item.imageUrl
         ? '<img class="item-thumb" src="' + escapeHtml(item.imageUrl) + '" alt="">'
         : '<div class="item-thumb placeholder">🍽️</div>';
@@ -584,9 +626,15 @@
         + '<span class="item-title">' + escapeHtml(item.title) + '</span>'
         + '<button class="item-count ' + cls + '" data-manual-key="' + escapeHtml(key) + '" data-manual-title="' + escapeHtml(item.title) + '">' + scanned + ' / ' + expectedQty + '</button>'
         + '<button class="confirm-btn' + (resolved ? ' done' : '') + '" data-confirm-key="' + escapeHtml(key) + '" data-confirm-qty="' + expectedQty + '" title="Confirm this item was received as expected">' + (resolved ? '✓' : '☐') + '</button>'
+        + (receivingPolicy.category === 'retail_essentials' && receivingPolicy.unitsPerCase > 0
+          ? '<span class="inventory-note">' + receivingPolicy.pickedCases + ' case(s) × ' + receivingPolicy.unitsPerCase + ' = ' + receivingPolicy.projectedPosUnits + ' POS units after future activation — no inventory was changed.</span>'
+          : receivingPolicy.category === 'other_essentials'
+            ? '<span class="inventory-note">Receipt confirmation only — this item will never update POS inventory.</span>'
+            : '')
         + '</div>';
+      });
+      html += '</div></section>';
     });
-    html += '</div>';
     html += extraItemsHtml();
     html += '<div class="manual-hint">Scan each item, or tap ☐ to confirm the count shown is correct, or tap the number to type in what you actually counted</div>';
     html += '<button class="scan-btn" id="scanBtn">📷 Scan Items</button>';

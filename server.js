@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const QRCode = require("qrcode");
+const { buildReceivingPolicy } = require("./receiving-policy");
 
 const app = express();
 app.use(express.json());
@@ -262,6 +263,7 @@ app.post("/api/submit-receiving-check", requireStoreAccess, (req, res) => {
   const itemResults = expectedItems.map((item) => {
     const scannedQty = scannedCounts[item.sku || item.title] || 0;
     const diff = scannedQty - item.pickedQty; // negative = short, positive = extra
+    const receivingPolicy = buildReceivingPolicy(item);
     totalExpected += item.pickedQty;
     if (diff !== 0) totalDiscrepant += Math.abs(diff);
     return {
@@ -269,6 +271,11 @@ app.post("/api/submit-receiving-check", requireStoreAccess, (req, res) => {
       expectedFromPicking: item.pickedQty,
       actuallyReceived: scannedQty,
       diff,
+      receivingCategory: receivingPolicy.category,
+      inventoryPolicy: receivingPolicy.inventoryPolicy,
+      unitsPerCase: receivingPolicy.unitsPerCase,
+      projectedPosUnits: receivingPolicy.projectedPosUnits,
+      posInventoryWriteEnabled: false,
     };
   });
 
@@ -298,6 +305,7 @@ app.post("/api/submit-receiving-check", requireStoreAccess, (req, res) => {
     extraItems,
     hasErrors: totalDiscrepant > 0,
     errorPercent,
+    posInventoryWritesEnabled: false,
   };
 
   const reports = loadReports();
@@ -330,6 +338,30 @@ app.post("/api/clear-reports", requireReportsManager, (req, res) => {
   const after = store && store !== "all" ? before.filter((r) => r.store !== store) : [];
   saveReports(after);
   res.json({ ok: true, removed: before.length - after.length });
+});
+
+// Store-specific install metadata for iPhone/Android home screens. The
+// stable start URL deliberately omits the access signature; opening the app
+// goes through /receiving/:store, which safely issues the current signature.
+app.get("/manifest/:store.webmanifest", (req, res) => {
+  const store = req.params.store;
+  if (!ALL_STORES.includes(store)) return res.sendStatus(404);
+  res.set("Cache-Control", "public, max-age=3600");
+  res.type("application/manifest+json").json({
+    id: `/receiving/${encodeURIComponent(store)}`,
+    name: `Hummus Fit Receiving — ${store}`,
+    short_name: "Receiving",
+    description: "Hummus Fit store delivery receiving and discrepancy reporting",
+    start_url: `/receiving/${encodeURIComponent(store)}`,
+    scope: "/",
+    display: "standalone",
+    background_color: "#ffffff",
+    theme_color: "#245b57",
+    icons: [
+      { src: "/assets/receiving-icon-192.png", sizes: "192x192", type: "image/png" },
+      { src: "/assets/receiving-icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+  });
 });
 
 app.get("/receiving/:store", (req, res) => {
