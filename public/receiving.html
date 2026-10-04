@@ -595,7 +595,7 @@
 
     var categorySections = [
       { key:'food', cls:'food', title:'Food delivery', note:'Current receiving and inventory process remains unchanged.', badge:'CURRENT FLOW' },
-      { key:'retail_essentials', cls:'retail', title:'Retail Essentials', note:'Received by case. POS unit conversion remains locked until the pilot is approved.', badge:'POS UNITS LATER' },
+      { key:'retail_essentials', cls:'retail', title:'Retail Essentials', note:'Confirm each case. Mapped items post as sell-units to this store after the receipt is submitted.', badge:'POS UNITS ON RECEIPT' },
       { key:'other_essentials', cls:'other', title:'Other Essentials', note:'Store supplies only. These items never enter POS inventory.', badge:'NO POS' }
     ];
     categorySections.forEach(function(section){
@@ -634,7 +634,7 @@
         + '<button class="item-count ' + cls + '" data-manual-key="' + escapeHtml(key) + '" data-manual-title="' + escapeHtml(item.title) + '">' + scanned + ' / ' + expectedQty + '</button>'
         + '<button class="confirm-btn' + (resolved ? ' done' : '') + '" data-confirm-key="' + escapeHtml(key) + '" data-confirm-qty="' + expectedQty + '" title="Confirm this item was received as expected">' + (resolved ? '✓' : '☐') + '</button>'
         + (receivingPolicy.category === 'retail_essentials' && receivingPolicy.unitsPerCase > 0
-          ? '<span class="inventory-note">' + receivingPolicy.pickedCases + ' case(s) × ' + receivingPolicy.unitsPerCase + ' = ' + receivingPolicy.projectedPosUnits + ' POS units after future activation — no inventory was changed.</span>'
+          ? '<span class="inventory-note">' + receivingPolicy.pickedCases + ' case(s) × ' + receivingPolicy.unitsPerCase + ' = ' + receivingPolicy.projectedPosUnits + ' POS units when this receipt is verified. Unmapped items need review.</span>'
           : receivingPolicy.category === 'other_essentials'
             ? '<span class="inventory-note">Receipt confirmation only — this item will never update POS inventory.</span>'
             : '')
@@ -841,6 +841,7 @@
       body: JSON.stringify({
         access: storeAccessToken,
         store: storeName,
+        orderId: expected.orderId,
         orderName: expected.orderName,
         pickedBy: expected.pickedBy,
         receivedBy: receivedBy,
@@ -860,6 +861,14 @@
         var html = '<div class="result-banner ' + (hasErrors ? 'bad' : 'good') + '">'
           + (hasErrors ? '⚠ ' + result.report.errorPercent + '% discrepancy — logged' : '✓ All good — everything matched')
           + '</div>';
+        var posResults = result.report.posInventoryResults || [];
+        if(posResults.length){
+          var needsReview = posResults.some(function(item){ return !['posted','already_posted','zero_received'].includes(item.status); });
+          html += '<div class="result-banner ' + (needsReview ? 'bad' : 'good') + '">'
+            + (needsReview ? '⚠ POS inventory needs review: ' : '✓ POS sell-unit inventory updated: ')
+            + posResults.map(function(item){ return escapeHtml((item.sku || 'Item') + ' — ' + (item.error || item.status)); }).join('; ')
+            + '</div>';
+        }
         main.innerHTML = html;
       })
       .catch(function(err){

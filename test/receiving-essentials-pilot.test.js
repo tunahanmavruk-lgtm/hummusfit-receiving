@@ -57,13 +57,16 @@ test("the iPhone app shell is store-specific and never caches live orders", () =
   assert.match(worker, /url\.pathname\.startsWith\("\/receiving\/"\)/);
 });
 
-test("the pilot records policies but contains no Shopify or POS inventory mutation", () => {
+test("Receiving sends a scoped receipt without holding Shopify credentials or changing Other Essentials", () => {
   const server = read("server.js");
   const html = read("public/receiving.html");
   assert.match(server, /posInventoryWritesEnabled: false/);
   assert.match(server, /posInventoryWriteEnabled: false/);
+  assert.match(server, /scope: \["essentials\.receive"\]/);
+  assert.match(server, /STORES\.includes\(store\) && retail\.length/);
+  assert.match(server, /\/api\/essentials-pos-receipt/);
   assert.match(html, /These items never enter POS inventory/);
-  assert.match(html, /no inventory was changed/);
+  assert.match(html, /POS sell-unit inventory updated/);
   for (const forbidden of ["inventoryAdjust", "inventorySet", "shopifyGraphQL", "/api/pos-inventory"]) {
     assert.equal((server + html).includes(forbidden), false, `must not contain ${forbidden}`);
   }

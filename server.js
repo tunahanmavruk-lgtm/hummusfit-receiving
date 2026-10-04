@@ -132,10 +132,10 @@ app.get("/api/admin-session", (req, res) => {
   res.json({ canManageReports: Boolean(identity && ["owner", "administrator", "manager"].includes(identity.role)) });
 });
 
-// The one and only connection to the Route Board app — a read-only
-// call to find out what was actually picked for a store, so receiving
-// has real ground truth to check against. Nothing here writes back to
-// Route Board, and nothing in Route Board depends on this app existing.
+// Route Board remains the authority for picked quantities and Shopify
+// inventory. Receiving reads the pick summary and, after a store confirms
+// physical cases, sends a short-lived signed receipt to the isolated POS
+// conversion endpoint. This service never holds Shopify credentials.
 const ROUTE_BOARD_URL =
   process.env.ROUTE_BOARD_URL || "https://hummusfit-route-board-production.up.railway.app";
 
@@ -252,8 +252,18 @@ app.get("/api/eta/:store", requireStoreAccess, async (req, res) => {
 // Called once the receiving employee finishes scanning everything —
 // compares what they actually scanned against the expected picked
 // quantities, builds the report, and saves it permanently.
-app.post("/api/submit-receiving-check", requireStoreAccess, (req, res) => {
-  const { store, orderName, pickedBy, receivedBy, expectedItems, scannedCounts, extraScans } = req.body;
+function signPosReceiptToken() {
+  if (!HF_LOGISTICS_HANDOFF_SECRET) return null;
+  const payloadPart = Buffer.from(JSON.stringify({
+    sub: "hummusfit-receiving", scope: ["essentials.receive"],
+    exp: Math.floor(Date.now() / 1000) + 60,
+  })).toString("base64url");
+  const signature = crypto.createHmac("sha256", HF_LOGISTICS_HANDOFF_SECRET).update(payloadPart).digest("base64url");
+  return `${payloadPart}.${signature}`;
+}
+
+app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => {
+  const { store, orderId, orderName, pickedBy, receivedBy, expectedItems, scannedCounts, extraScans } = req.body;
   if (!store || !expectedItems || !scannedCounts) {
     return res.status(400).json({ error: "store, expectedItems, and scannedCounts are required" });
   }
@@ -268,6 +278,7 @@ app.post("/api/submit-receiving-check", requireStoreAccess, (req, res) => {
     if (diff !== 0) totalDiscrepant += Math.abs(diff);
     return {
       title: item.title,
+      sku: item.sku || "",
       expectedFromPicking: item.pickedQty,
       actuallyReceived: scannedQty,
       diff,
@@ -306,12 +317,46 @@ app.post("/api/submit-receiving-check", requireStoreAccess, (req, res) => {
     hasErrors: totalDiscrepant > 0,
     errorPercent,
     posInventoryWritesEnabled: false,
+    posInventoryResults: [],
   };
 
   const reports = loadReports();
   reports.push(report);
   saveReports(reports);
 
+  const retail = expectedItems.filter((item) => buildReceivingPolicy(item).category === "retail_essentials");
+  if (STORES.includes(store) && retail.length) {
+    const token = signPosReceiptToken();
+    if (!token || !orderId) {
+      report.posInventoryResults = [{ status: "requires_review", error: "Secure POS receipt or order ID is not configured" }];
+    } else {
+      try {
+        const receivedCounts = Object.fromEntries(retail.map((item) => [item.sku, Number(scannedCounts[item.sku]) || 0]));
+        const response = await fetch(`${ROUTE_BOARD_URL}/api/essentials-pos-receipt`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ store, orderId, receivedCounts }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const result = await response.json();
+        report.posInventoryResults = result.results || [{ status: "requires_review", error: result.error || `Route Board returned ${response.status}` }];
+        report.posInventoryWritesEnabled = Boolean(result.ok);
+        for (const item of report.items) {
+          const posted = report.posInventoryResults.find((entry) => entry.sku === item.sku &&
+            ["posted", "already_posted"].includes(entry.status));
+          if (posted) {
+            item.posInventoryWriteEnabled = true;
+            item.posInventoryPostedUnits = posted.units;
+          }
+        }
+      } catch (error) {
+        report.posInventoryResults = [{ status: "requires_review", error: `POS inventory needs review: ${error.message}` }];
+      }
+    }
+    // Replace the just-created report with the authoritative posting result.
+    reports[reports.length - 1] = report;
+    saveReports(reports);
+  }
   res.json({ ok: true, report });
 });
 
