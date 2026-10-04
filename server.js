@@ -163,7 +163,9 @@ const OUT_OF_STATE_STORES = [
 ];
 const ALL_STORES = STORES.concat(OUT_OF_STATE_STORES);
 
-const DATA_FILE = path.join(__dirname, "reports.json");
+// Railway containers are replaced on deploy. Keep the receiving audit trail
+// on the mounted volume when present, with a local-file fallback for tests.
+const DATA_FILE = path.join(fs.existsSync("/data") ? "/data" : __dirname, "reports.json");
 function loadReports() {
   try {
     return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
@@ -172,7 +174,9 @@ function loadReports() {
   }
 }
 function saveReports(reports) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(reports, null, 2));
+  const temporary = `${DATA_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(reports, null, 2));
+  fs.renameSync(temporary, DATA_FILE);
 }
 
 app.get("/api/stores", requireReportsManager, (req, res) => {
