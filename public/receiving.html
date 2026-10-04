@@ -321,6 +321,7 @@
   var expected = null;
   var etaInfo = null;
   var etaRefreshTimer = null;
+  var etaRefreshPending = false;
   var scannedCounts = {};
   // Barcodes that got scanned but don't match anything on this delivery
   // — wrong item, someone else's item, a shelf tag, etc. Kept separate
@@ -406,15 +407,18 @@
         expected = result.data;
         dateRow.innerHTML += '<span class="info-chip order">Order' + (expected.orderName && expected.orderName.indexOf(',') !== -1 ? 's' : '') + ': ' + escapeHtml(expected.orderName || '—') + '</span>';
         dateRow.innerHTML += '<span class="info-chip crate">📦 ' + expected.crateCount + ' crate' + (expected.crateCount === 1 ? '' : 's') + ' expected</span>';
+        render(); // Receiving can start immediately; ETA arrives independently.
         etaPromise.then(function(eta){
           etaInfo = eta;
           render();
           if(!etaRefreshTimer){
             etaRefreshTimer = setInterval(function(){
+              if(etaRefreshPending) return;
+              etaRefreshPending = true;
               fetchEta().then(function(nextEta){
                 etaInfo = nextEta;
                 if(expected) render();
-              });
+              }).finally(function(){ etaRefreshPending = false; });
             }, 15000);
           }
         });
