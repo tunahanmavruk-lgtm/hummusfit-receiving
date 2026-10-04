@@ -479,9 +479,12 @@
     var stopsAwayText = etaInfo.stopsAway === 0
       ? 'Next stop'
       : (etaInfo.stopsAway + ' stop' + (etaInfo.stopsAway === 1 ? '' : 's') + ' ahead of you');
+    var freshnessText = etaInfo.etaSource === 'live-traffic'
+      ? ' · Updates as the van moves'
+      : ' · Initial estimate; live update unavailable';
     return '<div class="eta-card live"><span class="eta-dot live"></span><div>'
       + '<div class="eta-label">Estimated Arrival: ' + formatEtaTime(etaInfo.eta) + '</div>'
-      + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + ' · ' + stopsAwayText + '</div>'
+      + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + ' · ' + stopsAwayText + freshnessText + '</div>'
       + vanTrackLinkHtml()
       + '</div></div>';
   }
