@@ -8,6 +8,7 @@ const {
   INVENTORY_POLICY,
   buildReceivingPolicy,
   categoryForItem,
+  receiptCountKey,
 } = require("../receiving-policy");
 
 const root = path.resolve(__dirname, "..");
@@ -37,6 +38,12 @@ test("Other Essentials are receipt-only and never create POS units", () => {
   assert.equal(policy.inventoryPolicy, INVENTORY_POLICY.RECEIPT_ONLY_NO_POS);
   assert.equal(policy.projectedPosUnits, 0);
   assert.equal(policy.posInventoryWriteEnabled, false);
+});
+
+test("SKU-less retail cases keep their title-keyed manual receipt count", () => {
+  assert.equal(receiptCountKey({ sku: "SS-4890008101306-CS8", title: "Coca-Cola case" }), "SS-4890008101306-CS8");
+  assert.equal(receiptCountKey({ sku: null, title: "CASE — Poland Spring Water — 48 × 16.9 oz" }), "CASE — Poland Spring Water — 48 × 16.9 oz");
+  assert.match(read("server.js"), /const key = receiptCountKey\(item\)/);
 });
 
 test("food remains on the existing flow and apparel cannot enter Retail Essentials", () => {

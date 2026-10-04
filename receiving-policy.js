@@ -72,10 +72,15 @@ function buildReceivingPolicy(item) {
   };
 }
 
+function receiptCountKey(item) {
+  return String(item && item.sku || "").trim() || String(item && item.title || "").trim();
+}
+
 module.exports = {
   CATEGORY,
   INVENTORY_POLICY,
   buildReceivingPolicy,
   categoryForItem,
   inventoryPolicyForItem,
+  receiptCountKey,
 };

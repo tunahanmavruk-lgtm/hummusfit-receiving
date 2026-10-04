@@ -3,7 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const QRCode = require("qrcode");
-const { buildReceivingPolicy } = require("./receiving-policy");
+const { buildReceivingPolicy, receiptCountKey } = require("./receiving-policy");
 
 const app = express();
 app.use(express.json());
@@ -335,7 +335,10 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
       report.posInventoryResults = [{ status: "requires_review", error: "Secure POS receipt or order ID is not configured" }];
     } else {
       try {
-        const receivedCounts = Object.fromEntries(retail.map((item) => [item.sku, Number(scannedCounts[item.sku]) || 0]));
+        const receivedCounts = Object.fromEntries(retail.map((item) => {
+          const key = receiptCountKey(item);
+          return [key, Number(scannedCounts[key]) || 0];
+        }));
         const response = await fetch(`${ROUTE_BOARD_URL}/api/essentials-pos-receipt`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
