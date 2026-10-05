@@ -48,8 +48,12 @@
   .inventory-state{border-top:1px solid var(--line); margin-top:10px; padding-top:12px; font-size:12.5px; line-height:1.5; color:var(--dim);}
   .inventory-state strong{display:block; color:var(--navy); font-size:13.5px;}
   .inventory-state.needs_review strong{color:var(--bad);}
+  .inventory-state.partially_corrected strong{color:var(--orange);}
+  .inventory-state.corrected strong{color:#167a6b;}
   .inventory-state.conversion_posted strong{color:#167a6b;}
   .inventory-line{font-size:12px; color:var(--dim); padding-top:4px;}
+  .correction-note{display:block; margin-top:4px; font-size:11.5px; color:var(--bad);}
+  .correction-note.corrected{color:#167a6b;}
   .discrepancy-row{
     font-size:13.5px; padding:8px 0; color:var(--navy); display:flex; justify-content:space-between;
     border-top:1px solid var(--line); flex-wrap:wrap; gap:6px;
@@ -106,6 +110,21 @@
     return Math.round(diffHr / 24) + 'd ago';
   }
 
+  function easternTime(iso){
+    var date = new Date(iso);
+    return isNaN(date.getTime()) ? 'time unavailable' : date.toLocaleString('en-US', {
+      timeZone:'America/New_York', month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', timeZoneName:'short'
+    });
+  }
+
+  function correctionNote(line){
+    if(line && line.status === 'corrected') return '<span class="correction-note corrected">✓ '
+      + 'This store’s inventory was adjusted by Agent Hazar – Receiving at ' + esc(easternTime(line.postedAt))
+      + ' · Shopify ' + esc(line.delta > 0 ? '+' + line.delta : line.delta)
+      + ' · adjustment ' + esc(line.adjustmentId) + '</span>';
+    return '<span class="correction-note">Not yet confirmed as corrected in Shopify</span>';
+  }
+
   function render(reports){
     var el = document.getElementById('content');
     var filtered = currentFilter === 'errors' ? reports.filter(function(r){ return r.hasErrors; })
@@ -122,25 +141,34 @@
 
     el.className = '';
     el.innerHTML = filtered.map(function(r){
-      var discrepancies = r.items.filter(function(i){ return i.diff !== 0; });
-      var rows = discrepancies.map(function(i){
-        var cls = i.diff < 0 ? 'diff-short' : 'diff-extra';
-        var label = i.diff < 0 ? (Math.abs(i.diff) + ' short') : ('+' + i.diff + ' extra');
-        return '<div class="discrepancy-row"><span>' + esc(i.title) + '</span><span class="' + cls + '">' + label + ' (picked ' + esc(i.expectedFromPicking) + ', received ' + esc(i.actuallyReceived) + ')</span></div>';
+      var inventory = r.inventoryReconciliation || {status:'needs_review', label:'Inventory status unknown', detail:'This older report needs review.'};
+      var correctionByKey = {};
+      (inventory.correctionLines || []).forEach(function(line){ correctionByKey[line.key] = line; });
+      var rows = (r.items || []).map(function(i,index){
+        var orderMismatch = i.orderDiff !== null && i.orderDiff !== undefined && i.orderDiff !== 0;
+        if(i.diff === 0 && !orderMismatch) return '';
+        var cls = i.diff < 0 || (i.diff === 0 && i.orderDiff < 0) ? 'diff-short' : 'diff-extra';
+        var label = i.diff < 0 ? (Math.abs(i.diff) + ' short') :
+          i.diff > 0 ? ('+' + i.diff + ' extra') : 'Picked quantity matched';
+        var orderContext = i.orderedQty !== null && i.orderedQty !== undefined ? ', ordered ' + esc(i.orderedQty) : '';
+        return '<div class="discrepancy-row"><span>' + esc(i.title) + correctionNote(correctionByKey['item:' + index])
+          + '</span><span class="' + cls + '">' + label + ' (picked ' + esc(i.expectedFromPicking)
+          + ', received ' + esc(i.actuallyReceived) + orderContext + ')</span></div>';
       }).join('');
       // Barcodes the receiving employee scanned that weren't on the order
       // at all — not a short/over count on a real line item, so they
       // never show up in r.items above. Old reports (submitted before
       // this fix shipped) won't have extraItems at all — guard for that.
-      var extraRows = (r.extraItems || []).map(function(e){
-        return '<div class="discrepancy-row"><span>Wrong / extra item — ' + esc(e.code) + '</span><span class="diff-extra">×' + esc(e.qty) + ' not on order</span></div>';
+      var extraRows = (r.extraItems || []).map(function(e,index){
+        return '<div class="discrepancy-row"><span>Wrong / extra item — ' + esc(e.code)
+          + correctionNote(correctionByKey['extra:' + index]) + '</span><span class="diff-extra">×' + esc(e.qty) + ' not on order</span></div>';
       }).join('');
-      var inventory = r.inventoryReconciliation || {status:'needs_review', label:'Inventory status unknown', detail:'This older report needs review.'};
       var postedLines = (r.posInventoryResults || []).filter(function(result){
         return result.status === 'posted' || result.status === 'already_posted';
       }).map(function(result){
         return '<div class="inventory-line">' + esc(result.sku) + ': ' + esc(result.units) + ' POS sell-units '
           + (result.status === 'already_posted' ? 'previously posted' : 'posted') + ' from received cases'
+          + (result.postedAt ? ' at ' + esc(easternTime(result.postedAt)) : '')
           + (result.adjustmentId ? ' · Shopify adjustment ' + esc(result.adjustmentId) : '') + '</div>';
       }).join('');
       var blockedLines = (r.posInventoryResults || []).filter(function(result){
@@ -159,7 +187,9 @@
         + rows
         + extraRows
         + '<div class="inventory-state ' + esc(inventory.status) + '"><strong>' + esc(inventory.label) + '</strong>'
-        + esc(inventory.detail) + postedLines + blockedLines + '</div>'
+        + esc(inventory.detail)
+        + (inventory.status === 'corrected' && inventory.correctedAt ? ' ' + esc(easternTime(inventory.correctedAt)) + '.' : '')
+        + postedLines + blockedLines + '</div>'
         + '</div>';
     }).join('');
   }

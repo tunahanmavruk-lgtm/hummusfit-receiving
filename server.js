@@ -4,7 +4,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const QRCode = require("qrcode");
 const { buildReceivingPolicy, receiptCountKey } = require("./receiving-policy");
-const { reconciliationStatus } = require("./reconciliation-status");
+const { reconciliationStatus, POS_STORES } = require("./reconciliation-status");
 
 const app = express();
 app.use(express.json());
@@ -278,15 +278,21 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
   const itemResults = expectedItems.map((item) => {
     const scannedQty = scannedCounts[item.sku || item.title] || 0;
     const diff = scannedQty - item.pickedQty; // negative = short, positive = extra
+    const orderedQty = Number.isSafeInteger(Number(item.expectedQty)) && Number(item.expectedQty) >= 0
+      ? Number(item.expectedQty) : null;
+    const orderDiff = orderedQty === null ? null : scannedQty - orderedQty;
     const receivingPolicy = buildReceivingPolicy(item);
     totalExpected += item.pickedQty;
-    if (diff !== 0) totalDiscrepant += Math.abs(diff);
+    totalDiscrepant += POS_STORES.has(store) && orderDiff !== null
+      ? Math.max(Math.abs(diff), Math.abs(orderDiff)) : Math.abs(diff);
     return {
       title: item.title,
       sku: item.sku || "",
+      orderedQty,
       expectedFromPicking: item.pickedQty,
       actuallyReceived: scannedQty,
       diff,
+      orderDiff,
       receivingCategory: receivingPolicy.category,
       inventoryPolicy: receivingPolicy.inventoryPolicy,
       unitsPerCase: receivingPolicy.unitsPerCase,
@@ -324,6 +330,9 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
     errorPercent,
     posInventoryWritesEnabled: false,
     posInventoryResults: [],
+    // Only server-verified Shopify adjustment groups may populate this.
+    // A discrepancy is never marked solved merely because a scan was saved.
+    inventoryCorrections: [],
   };
 
   const reports = loadReports();
