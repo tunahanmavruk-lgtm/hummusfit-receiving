@@ -4,6 +4,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const QRCode = require("qrcode");
 const { buildReceivingPolicy, receiptCountKey } = require("./receiving-policy");
+const { reconciliationStatus } = require("./reconciliation-status");
 
 const app = express();
 app.use(express.json());
@@ -312,6 +313,7 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
   const report = {
     id: store + "::" + Date.now(),
     store,
+    orderId: orderId || "",
     orderName: orderName || "",
     pickedBy: pickedBy || "Unknown",
     receivedBy: receivedBy || "Unknown",
@@ -370,14 +372,18 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
 // For the picking-crew dashboard — every report, most recent first.
 app.get("/api/reports", requireReportsManager, (req, res) => {
   const reports = loadReports();
-  res.json({ reports: reports.slice().reverse() });
+  res.json({ reports: reports.slice().reverse().map((report) => ({
+    ...report, inventoryReconciliation: reconciliationStatus(report),
+  })) });
 });
 
 // History for one specific store, most recent first — for the
 // per-location trend view.
 app.get("/api/reports/:store", requireReportsManager, (req, res) => {
   const reports = loadReports().filter((r) => r.store === req.params.store);
-  res.json({ reports: reports.slice().reverse() });
+  res.json({ reports: reports.slice().reverse().map((report) => ({
+    ...report, inventoryReconciliation: reconciliationStatus(report),
+  })) });
 });
 
 // Clears reports either for one specific store (test data cleanup) or

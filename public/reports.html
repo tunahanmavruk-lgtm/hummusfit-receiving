@@ -45,6 +45,11 @@
   }
   .error-badge.good{ background:var(--good-tint); color:var(--good); }
   .error-badge.bad{ background:var(--bad-tint); color:var(--bad); }
+  .inventory-state{border-top:1px solid var(--line); margin-top:10px; padding-top:12px; font-size:12.5px; line-height:1.5; color:var(--dim);}
+  .inventory-state strong{display:block; color:var(--navy); font-size:13.5px;}
+  .inventory-state.needs_review strong{color:var(--bad);}
+  .inventory-state.conversion_posted strong{color:#167a6b;}
+  .inventory-line{font-size:12px; color:var(--dim); padding-top:4px;}
   .discrepancy-row{
     font-size:13.5px; padding:8px 0; color:var(--navy); display:flex; justify-content:space-between;
     border-top:1px solid var(--line); flex-wrap:wrap; gap:6px;
@@ -77,6 +82,7 @@
   <div class="filter-tabs">
     <button class="filter-tab active" data-filter="all">All Reports</button>
     <button class="filter-tab" data-filter="errors">Errors Only</button>
+    <button class="filter-tab" data-filter="inventory">Inventory Needs Action</button>
     <button class="filter-tab" id="clearBtn" hidden style="margin-left:auto; color:var(--bad); border-color:var(--bad);">🗑 Clear Reports</button>
   </div>
   <div id="content" class="empty-state">Loading…</div>
@@ -84,6 +90,12 @@
 
 <script>
   var currentFilter = 'all';
+
+  function esc(value){
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function(char){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char];
+    });
+  }
 
   function timeAgo(iso){
     var diffMin = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -96,11 +108,15 @@
 
   function render(reports){
     var el = document.getElementById('content');
-    var filtered = currentFilter === 'errors' ? reports.filter(function(r){ return r.hasErrors; }) : reports;
+    var filtered = currentFilter === 'errors' ? reports.filter(function(r){ return r.hasErrors; })
+      : currentFilter === 'inventory' ? reports.filter(function(r){ return r.inventoryReconciliation && r.inventoryReconciliation.status === 'needs_review'; })
+      : reports;
 
     if(filtered.length === 0){
       el.className = 'empty-state';
-      el.textContent = currentFilter === 'errors' ? 'No errors reported — everything checked out clean.' : 'No receiving checks logged yet.';
+      el.textContent = currentFilter === 'errors' ? 'No errors reported — everything checked out clean.'
+        : currentFilter === 'inventory' ? 'No inventory reconciliation items need action.'
+        : 'No receiving checks logged yet.';
       return;
     }
 
@@ -110,24 +126,40 @@
       var rows = discrepancies.map(function(i){
         var cls = i.diff < 0 ? 'diff-short' : 'diff-extra';
         var label = i.diff < 0 ? (Math.abs(i.diff) + ' short') : ('+' + i.diff + ' extra');
-        return '<div class="discrepancy-row"><span>' + i.title.replace(/</g,'&lt;') + '</span><span class="' + cls + '">' + label + ' (expected ' + i.expectedFromPicking + ', got ' + i.actuallyReceived + ')</span></div>';
+        return '<div class="discrepancy-row"><span>' + esc(i.title) + '</span><span class="' + cls + '">' + label + ' (picked ' + esc(i.expectedFromPicking) + ', received ' + esc(i.actuallyReceived) + ')</span></div>';
       }).join('');
       // Barcodes the receiving employee scanned that weren't on the order
       // at all — not a short/over count on a real line item, so they
       // never show up in r.items above. Old reports (submitted before
       // this fix shipped) won't have extraItems at all — guard for that.
       var extraRows = (r.extraItems || []).map(function(e){
-        return '<div class="discrepancy-row"><span>Wrong / extra item — ' + String(e.code).replace(/</g,'&lt;') + '</span><span class="diff-extra">×' + e.qty + ' not on order</span></div>';
+        return '<div class="discrepancy-row"><span>Wrong / extra item — ' + esc(e.code) + '</span><span class="diff-extra">×' + esc(e.qty) + ' not on order</span></div>';
+      }).join('');
+      var inventory = r.inventoryReconciliation || {status:'needs_review', label:'Inventory status unknown', detail:'This older report needs review.'};
+      var postedLines = (r.posInventoryResults || []).filter(function(result){
+        return result.status === 'posted' || result.status === 'already_posted';
+      }).map(function(result){
+        return '<div class="inventory-line">' + esc(result.sku) + ': ' + esc(result.units) + ' POS sell-units '
+          + (result.status === 'already_posted' ? 'previously posted' : 'posted') + ' from received cases'
+          + (result.adjustmentId ? ' · Shopify adjustment ' + esc(result.adjustmentId) : '') + '</div>';
+      }).join('');
+      var blockedLines = (r.posInventoryResults || []).filter(function(result){
+        return !['posted','already_posted','zero_received'].includes(result.status);
+      }).map(function(result){
+        return '<div class="inventory-line">' + esc(result.sku || 'POS posting') + ': '
+          + esc(result.error || result.status || 'Review required') + '</div>';
       }).join('');
 
       return '<div class="report-card">'
         + '<div class="report-top">'
-        + '<div><div class="report-store">' + r.store.replace(/</g,'&lt;') + (r.orderName ? ' — ' + r.orderName : '') + '</div>'
-        + '<div class="report-meta">Picked by ' + (r.pickedBy||'—') + ' · Received by ' + (r.receivedBy||'—') + ' · ' + timeAgo(r.submittedAt) + '</div></div>'
+        + '<div><div class="report-store">' + esc(r.store) + (r.orderName ? ' — ' + esc(r.orderName) : '') + '</div>'
+        + '<div class="report-meta">Picked by ' + esc(r.pickedBy||'—') + ' · Received by ' + esc(r.receivedBy||'—') + ' · ' + timeAgo(r.submittedAt) + '</div></div>'
         + '<div class="error-badge ' + (r.hasErrors ? 'bad' : 'good') + '">' + (r.hasErrors ? r.errorPercent + '% error' : '✓ Clean') + '</div>'
         + '</div>'
         + rows
         + extraRows
+        + '<div class="inventory-state ' + esc(inventory.status) + '"><strong>' + esc(inventory.label) + '</strong>'
+        + esc(inventory.detail) + postedLines + blockedLines + '</div>'
         + '</div>';
     }).join('');
   }
