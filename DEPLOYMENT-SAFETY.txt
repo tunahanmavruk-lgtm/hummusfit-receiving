@@ -1,0 +1,69 @@
+DEPLOYMENT SAFETY — REVIEW BEFORE RELEASE
+
+This patch is validated against GitHub main, not the running Railway image.
+Both production services contain newer direct CLI uploads not represented by
+GitHub main. Do not deploy this branch or merge to an automatically deployed
+branch until those production-only changes have been recovered and reconciled.
+
+What changes
+- Railpack starts `node server.js` directly, so Node receives SIGTERM.
+- SIGTERM/SIGINT stop accepting new work, stop managed timers, and allow active
+  HTTP requests and tracked background jobs to finish (25-second deadline).
+- Successful drains exit 0; errors/timeouts exit 1. Unexpected exceptions are
+  not swallowed, and the restart policy is not weakened.
+- /healthz checks HTTP readiness and data-directory access without credentials
+  or third-party API calls. It is not an end-to-end Shopify/tracking check.
+- Existing data filenames and JSON structures are preserved. Atomic writes
+  flush a temporary file before renaming it over the old file on the same volume.
+- Railway startup requires its declared volume; absent mounts, mismatched
+  DATA_DIR, and unreadable/corrupt existing JSON fail closed rather than silently
+  initializing an empty replacement. Local tests use disposable DATA_DIR paths.
+
+Required Railway release settings (not applied by this change)
+- Current public domain target: 8080. Set explicit PORT=8080 before deploying
+  code that reads PORT. In particular, Route Board currently hardcodes 3000,
+  while Railway may supply 8080 automatically. Coordinate PORT and targetPort;
+  do not create a port mismatch while enabling the new health check.
+- Start command: node server.js (railpack.json supplies it; check dashboard and
+  RAILPACK_START_CMD do not override it with npm run start).
+- Health check: /healthz; timeout: 60 seconds. / is protected on Receiving.
+- Set RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30, exceeding the app's 25-second limit.
+  Verify the resolved deployment config. A zero grace period defeats draining.
+- Keep ON_FAILURE with 10 retries, one replica, and the current attached /data
+  volume. Do not detach/recreate a volume, reset JSON, or scale these file-backed
+  apps to multiple writers. Do not run data initialization during image build.
+
+Before release
+1. Reconcile the exact current production source and any newer background jobs.
+   Register every inventory/report retry via runtime.schedule(...,
+   { immediate: false }), delayed retry via runtime.later(...), and detached
+   work via runtime.runBackground(...). Otherwise shutdown cannot wait for it.
+2. Verify a recoverable backup/snapshot of the existing /data volume and a restore
+   path. Confirm JSON readability, filesystem permissions, and file inventory.
+   Tests use synthetic files; they do not certify production data integrity.
+3. Run all tests and signal/drain tests on the reconciled code, then build and
+   test an isolated Railway environment with its own volume and no live write
+   credentials. Exercise a real receiving submission and pending retry using
+   mocked integrations. Never attach staging to the production volume.
+4. Release once in a quiet window after explicit production approval. Volumes
+   require stopping the old deployment before mounting the replacement, so a
+   short interruption is expected even with health checks.
+5. Confirm health, read-only business checks, startup logs, retained record counts,
+   and normal retries. Observe shutdown logs and alerts during a controlled
+   replacement. If needed, roll back the code image only and retain /data.
+
+Known separate findings
+Receiving logged HTTP 413 PayloadTooLargeError hours before a later SIGTERM.
+The request-body limit should be assessed against a real failing receipt's byte
+size and line count; raising it without that evidence is not part of this fix.
+Railpack selected Node 18.20.8 from >=18. This patch was tested on that version;
+an LTS migration needs its own compatibility verification. Receiving currently
+has no committed lockfile and Route Board tracks node_modules. These are build
+reproducibility concerns, not demonstrated causes of these shutdown alerts.
+
+References
+https://docs.railway.com/deployments/troubleshooting/nodejs-sigterm-handling
+https://docs.railway.com/deployments/healthchecks
+https://docs.railway.com/deployments/restart-policy
+https://docs.railway.com/deployments/deployment-teardown
+https://railpack.com/config/file
