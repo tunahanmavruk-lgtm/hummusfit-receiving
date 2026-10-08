@@ -1,3 +1,4 @@
+const { dataDirectory, readJson, writeJson, listeningPort, createRuntime } = require("./runtime-safety");
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
@@ -6,9 +7,11 @@ const QRCode = require("qrcode");
 const { buildReceivingPolicy, receiptCountKey } = require("./receiving-policy");
 const { reconciliationStatus, POS_STORES } = require("./reconciliation-status");
 
+const PERSISTENT_DIR = dataDirectory(__dirname);
 const app = express();
+const runtime = createRuntime(app, { directory: PERSISTENT_DIR, files: ["reports.json"] });
 app.use(express.json());
-const PORT = process.env.PORT || 3000;
+const PORT = listeningPort();
 const HF_LOGISTICS_HANDOFF_SECRET = process.env.HF_LOGISTICS_HANDOFF_SECRET || "";
 const STORE_TRACKING_SECRET = process.env.STORE_TRACKING_SECRET || "";
 const HF_LOGISTICS_COOKIE = "hf_logistics_access";
@@ -165,19 +168,13 @@ const OUT_OF_STATE_STORES = [
 const ALL_STORES = STORES.concat(OUT_OF_STATE_STORES);
 
 // Railway containers are replaced on deploy. Keep the receiving audit trail
-// on the mounted volume when present, with a local-file fallback for tests.
-const DATA_FILE = path.join(fs.existsSync("/data") ? "/data" : __dirname, "reports.json");
+// on the required Railway volume; DATA_DIR isolates local tests.
+const DATA_FILE = path.join(PERSISTENT_DIR, "reports.json");
 function loadReports() {
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-  } catch (e) {
-    return [];
-  }
+  return readJson(DATA_FILE, []);
 }
 function saveReports(reports) {
-  const temporary = `${DATA_FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, JSON.stringify(reports, null, 2));
-  fs.renameSync(temporary, DATA_FILE);
+  writeJson(DATA_FILE, reports);
 }
 
 app.get("/api/stores", requireReportsManager, (req, res) => {
@@ -468,6 +465,6 @@ app.get("/receiving.html", (req, res) => res.status(404).send("Not found"));
 
 app.use(express.static(path.join(__dirname, "public")));
 
-app.listen(PORT, "0.0.0.0", () => {
+runtime.listen(PORT, () => {
   console.log(`Receiving check app running on port ${PORT}`);
 });
