@@ -160,7 +160,12 @@
       // never show up in r.items above. Old reports (submitted before
       // this fix shipped) won't have extraItems at all — guard for that.
       var extraRows = (r.extraItems || []).map(function(e,index){
-        return '<div class="discrepancy-row"><span>Wrong / extra item — ' + esc(e.code)
+        var identified = e.catalogVerified && e.sku;
+        var label = identified ? esc(e.title || e.sku) + ' · SKU ' + esc(e.sku) + ' · code ' + esc(e.code) : esc(e.code);
+        var evidence = identified ? 'Catalog match confirmed from ' + esc(e.source || 'unknown') + '; Shopify inventory correction still requires proof.'
+          : 'Catalog match not confirmed; logistics review required before any inventory change.';
+        return '<div class="discrepancy-row"><span>Wrong / extra item — ' + label
+          + '<span class="correction-note">' + evidence + '</span>'
           + correctionNote(correctionByKey['extra:' + index]) + '</span><span class="diff-extra">×' + esc(e.qty) + ' not on order</span></div>';
       }).join('');
       var postedLines = (r.posInventoryResults || []).filter(function(result){

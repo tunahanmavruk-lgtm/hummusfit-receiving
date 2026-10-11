@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const QRCode = require("qrcode");
 const { buildReceivingPolicy, receiptCountKey } = require("./receiving-policy");
 const { reconciliationStatus, POS_STORES } = require("./reconciliation-status");
+const { cleanExtraLines, verifyExtraLines } = require("./receiving-extra-evidence");
 
 const app = express();
 app.use(express.json());
@@ -292,7 +293,7 @@ app.post("/api/lookup-received-barcode", requireStoreAccess, async (req, res) =>
 });
 
 app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => {
-  const { store, orderId, orderName, pickedBy, receivedBy, expectedItems, scannedCounts, extraScans } = req.body;
+  const { store, orderId, orderName, pickedBy, receivedBy, expectedItems, scannedCounts, extraScans, extraDetails } = req.body;
   if (!store || !expectedItems || !scannedCounts) {
     return res.status(400).json({ error: "store, expectedItems, and scannedCounts are required" });
   }
@@ -332,9 +333,24 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
   // toward the error rate the same way a short/over count on a real item
   // would — a wrong item showing up is exactly as much of a receiving
   // discrepancy as a missing one.
-  const extraItems = Object.keys(extraScans || {})
-    .filter((code) => (extraScans[code] || 0) > 0)
-    .map((code) => ({ code, qty: extraScans[code] }));
+  let extraItems;
+  try {
+    const submittedExtras = cleanExtraLines(extraScans, extraDetails);
+    extraItems = await verifyExtraLines(submittedExtras, async (code) => {
+      const token = signPosReceiptToken();
+      if (!token) throw new Error("Catalog lookup is unavailable");
+      const response = await fetch(`${ROUTE_BOARD_URL}/api/receiving-barcode-lookup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ store, code }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) throw new Error("Catalog lookup failed");
+      return response.json();
+    });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
   const extraQtyTotal = extraItems.reduce((sum, e) => sum + e.qty, 0);
   totalDiscrepant += extraQtyTotal;
 
@@ -399,7 +415,7 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
     reports[reports.length - 1] = report;
     saveReports(reports);
   }
-  res.json({ ok: true, report });
+  res.json({ ok: true, report: { ...report, inventoryReconciliation: reconciliationStatus(report) } });
 });
 
 // For the picking-crew dashboard — every report, most recent first.
