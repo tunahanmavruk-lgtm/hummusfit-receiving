@@ -12,6 +12,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="/receiving-policy.js"></script>
+<script src="/receiving-barcode.js"></script>
 <style>
   :root{
     --bg:#FFFFFF;
@@ -239,10 +240,17 @@
   }
   #scannerOverlay .scanner-close{ font-size:22px; color:#fff; cursor:pointer; padding:4px 10px; }
   #reader{ flex:1; }
+  .scanner-entry{ display:flex; gap:8px; padding:8px 16px; background:#111; }
+  .scanner-entry input{ flex:1; min-width:0; padding:12px; border-radius:8px; border:1px solid #777; font-size:16px; }
+  .scanner-entry button{ border:0; border-radius:8px; padding:0 14px; font-weight:700; color:#fff; background:var(--teal); }
   .scan-progress-label{
     padding: 16px 20px max(16px, env(safe-area-inset-bottom));
     color:#fff; font-weight:700; font-size:15px; text-align:center;
     background: rgba(0,0,0,0.6);
+  }
+  #scannerManualExtraBtn{
+    margin:8px 16px; padding:12px; border:1px solid #ddd; border-radius:8px;
+    background:#222; color:#fff; font-weight:700;
   }
 
   .empty-state, .error-state{
@@ -261,6 +269,8 @@
   }
   .result-banner.good{ background:var(--good-tint); color:var(--good); }
   .result-banner.bad{ background:var(--bad-tint); color:var(--bad); }
+  .result-banner.pending{ background:var(--orange-tint); color:var(--orange); }
+  .result-detail{ font-size:12px; line-height:1.5; font-weight:500; margin-top:8px; }
 
   /* Persistent "extra / wrong item" card — the one thing the old flow
      never gave a store employee: a place to actually SEE what got
@@ -315,11 +325,13 @@
 
 <div id="scannerOverlay">
   <div class="scanner-header">
-    <span>Scan item barcode</span>
+    <span id="scannerTitle">Scan item barcode</span>
     <span class="scanner-close" id="scannerCloseBtn">✕</span>
   </div>
   <div id="reader"></div>
+  <div class="scanner-entry"><input id="handheldBarcode" inputmode="none" autocomplete="off" placeholder="Tap here, then scan with Netum"><button id="handheldSubmit" type="button">Use code</button></div>
   <div id="scanProgressLabel" class="scan-progress-label"></div>
+  <button id="scannerManualExtraBtn" type="button" style="display:none">Barcode damaged or missing? Describe item for review</button>
 </div>
 
 <script>
@@ -356,13 +368,16 @@
   // this only ever showed as a toast at the moment of the scan, so a
   // store employee who wasn't staring at the screen at that exact
   // second had no way to ever see it again.
-  var extraScans = {};
+  var extraScans = Object.create(null);
+  var extraDetails = Object.create(null);
   // Explicit "this item was actually checked" flag, separate from the
   // count itself — a 0 count is a legitimate "reported missing," but an
   // item nobody ever touched has no business looking the same. Finish
   // stays locked until every non-picking-missing item has one of these.
   var resolvedKeys = {};
   var html5QrCode = null;
+  var scanMode = 'expected';
+  var extraScanPending = false;
   var lastScanTime = 0;
   var lastScanCode = null;
   var currentlyVisibleCode = null;
@@ -549,8 +564,10 @@
     var html = '<div class="extra-card">';
     html += '<div class="extra-card-title">⚠ Not on this order</div>';
     codes.forEach(function(code){
+      var detail = extraDetails[code] || {};
       html += '<div class="extra-row">'
-        + '<span class="extra-code">' + escapeHtml(code) + '</span>'
+        + '<span class="extra-code">' + escapeHtml(detail.title || code)
+        + '<small>' + escapeHtml(code) + ' · ' + (detail.source === 'scan' ? 'Camera scanned' : detail.source === 'entered' ? 'Handheld/entered code' : 'Manual entry') + '; inventory review pending</small></span>'
         + '<span class="extra-qty">×' + extraScans[code] + '</span>'
         + '<button class="extra-remove" data-remove-extra="' + escapeHtml(code) + '" title="Remove — scanned by mistake">✕</button>'
         + '</div>';
@@ -566,15 +583,44 @@
   // it renders in the same card and reports the same way — the only
   // difference is how the entry got there.
   function reportManualExtra(){
-    var desc = prompt('What did you get that wasn\'t on this order? (item name, brand, or barcode if you can read it)');
+    var desc = prompt('Enter the wrong item\'s barcode or exact Shopify SKU. If there is no code, enter its name for review. Unknown items need review before inventory changes. A name alone cannot update POS inventory.');
     if(desc === null) return;
     desc = desc.trim();
     if(!desc){
       alert('Enter a description of the item.');
       return;
     }
-    extraScans[desc] = (extraScans[desc] || 0) + 1;
+    var qtyText = prompt('How many physical items did you receive?', '1');
+    if(qtyText === null) return;
+    qtyText = qtyText.trim();
+    var qty = Number(qtyText);
+    if(!/^\d+$/.test(qtyText) || !Number.isSafeInteger(qty) || qty < 1 || qty > 1000){
+      alert('Enter a whole-number quantity from 1 to 1000. Nothing was added.');
+      return;
+    }
+    extraScans[desc] = (extraScans[desc] || 0) + qty;
+    extraDetails[desc] = { source:'manual', lookupStatus:'pending' };
     render();
+    if(!/^[A-Za-z0-9_-]{5,60}$/.test(desc)){
+      extraDetails[desc].lookupStatus = 'unmatched';
+      render();
+      return;
+    }
+    fetch('/api/lookup-received-barcode', {
+      method:'POST', headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify({ access:storeAccessToken, store:storeName, code:desc })
+    }).then(function(response){ return response.ok ? response.json() : { status:'unavailable' }; })
+    .then(function(result){
+      if(!extraScans[desc]) return;
+      extraDetails[desc] = { source:'entered', lookupStatus:result.status,
+        title:result.status === 'matched' ? result.title : '',
+        sku:result.status === 'matched' ? result.sku : '' };
+      render();
+    }).catch(function(){
+      if(!extraScans[desc]) return;
+      extraDetails[desc] = { source:'manual', lookupStatus:'unavailable' };
+      render();
+    });
   }
 
   function render(){
@@ -645,11 +691,7 @@
     html += extraItemsHtml();
     html += '<div class="manual-hint">Scan each item, or tap ☐ to confirm the count shown is correct, or tap the number to type in what you actually counted</div>';
     html += '<button class="scan-btn" id="scanBtn">📷 Scan Items</button>';
-    // For when a wrong/extra item's barcode won't scan (damaged, missing,
-    // or off-brand packaging with nothing recognizable) — lets the
-    // employee log it by hand instead of the discrepancy just never
-    // getting captured because the camera couldn't read it.
-    html += '<button class="report-extra-btn" id="reportExtraBtn">⚠ Report Wrong / Extra Item</button>';
+    html += '<button class="report-extra-btn" id="reportExtraBtn">⚠ Scan Wrong / Extra Item</button>';
     if(unresolvedCount > 0){
       html += '<button class="finish-btn pending" id="finishBtn" disabled>⚠ Confirm ' + unresolvedCount + ' more item' + (unresolvedCount === 1 ? '' : 's') + ' before finishing</button>';
     } else {
@@ -657,7 +699,7 @@
     }
     main.innerHTML = html;
     document.getElementById('scanBtn').addEventListener('click', function(){ tapFeedback(); openScanner(); });
-    document.getElementById('reportExtraBtn').addEventListener('click', function(){ tapFeedback(); reportManualExtra(); });
+    document.getElementById('reportExtraBtn').addEventListener('click', function(){ tapFeedback(); openScanner('extra'); });
     document.querySelectorAll('[data-manual-key]').forEach(function(btn){
       btn.addEventListener('click', function(){
         tapFeedback();
@@ -707,18 +749,25 @@
         tapFeedback();
         var code = btn.getAttribute('data-remove-extra');
         delete extraScans[code];
+        delete extraDetails[code];
         render();
       });
     });
   }
 
-  function openScanner(){
+  function openScanner(mode){
+    scanMode = mode === 'extra' ? 'extra' : 'expected';
+    extraScanPending = false;
     lastScanTime = 0; lastScanCode = null; currentlyVisibleCode = null; missedFrameCount = 0;
     document.getElementById('scannerOverlay').style.display = 'flex';
-    document.getElementById('scanProgressLabel').textContent = 'Point the camera at each item as you unload it';
+    document.getElementById('scannerTitle').textContent = scanMode === 'extra' ? 'Scan the wrong / extra item' : 'Scan item barcode';
+    document.getElementById('scannerManualExtraBtn').style.display = scanMode === 'extra' ? 'block' : 'none';
+    document.getElementById('scanProgressLabel').textContent = scanMode === 'extra'
+      ? 'Scan its physical barcode with the camera or Netum. Unknown items stay pending review.'
+      : 'Point the camera at each item as you unload it';
     if(typeof Html5Qrcode === 'undefined'){
-      alert('Scanner failed to load. Check your connection and try again.');
-      closeScanner();
+      document.getElementById('scanProgressLabel').textContent = 'Camera scanner unavailable. Use the Netum scanner or enter the exact barcode below.';
+      document.getElementById('handheldBarcode').focus();
       return;
     }
     html5QrCode = new Html5Qrcode('reader', {
@@ -747,12 +796,14 @@
         }
       }
     ).catch(function(err){
-      alert('Could not access the camera: ' + err);
-      closeScanner();
+      document.getElementById('scanProgressLabel').textContent = 'Camera unavailable. Use the Netum scanner or enter the exact barcode below.';
+      html5QrCode = null;
+      document.getElementById('handheldBarcode').focus();
     });
   }
 
   function closeScanner(){
+    scanMode = 'expected';
     document.getElementById('scannerOverlay').style.display = 'none';
     if(html5QrCode){
       html5QrCode.stop().catch(function(){}).then(function(){
@@ -762,6 +813,24 @@
     }
   }
   document.getElementById('scannerCloseBtn').addEventListener('click', function(){ tapFeedback(); closeScanner(); });
+  document.getElementById('scannerManualExtraBtn').addEventListener('click', function(){
+    tapFeedback();
+    closeScanner();
+    reportManualExtra();
+  });
+  function submitHandheldBarcode(){
+    var input = document.getElementById('handheldBarcode');
+    var code = input.value.trim();
+    input.value = '';
+    if(!code) return;
+    currentlyVisibleCode = null;
+    handleScanResult(code, 'entered');
+    input.focus();
+  }
+  document.getElementById('handheldSubmit').addEventListener('click', submitHandheldBarcode);
+  document.getElementById('handheldBarcode').addEventListener('keydown', function(event){
+    if(event.key === 'Enter'){ event.preventDefault(); submitHandheldBarcode(); }
+  });
 
   // A short, synthesized beep — no audio file needed. Plus a haptic
   // buzz where the browser supports it (Android Chrome does; iOS
@@ -789,24 +858,7 @@
     if(navigator.vibrate) navigator.vibrate(80);
   }
 
-  function handleScanResult(scannedCode){
-    var scanned = (scannedCode || '').trim();
-    missedFrameCount = 0; // a successful detection means it's still there, whichever code it is
-
-    // Same code still sitting in frame from the last detection — not a
-    // new physical item, ignore it until it actually disappears first.
-    if(scanned === currentlyVisibleCode) return;
-    currentlyVisibleCode = scanned;
-
-    var matchedItem = expected.items.find(function(i){ return (i.sku || '') === scanned; });
-    if(!matchedItem){
-      extraScans[scanned] = (extraScans[scanned] || 0) + 1;
-      document.getElementById('scanProgressLabel').textContent = 'Scanned something not on this delivery — noted as extra';
-      playScanFeedback();
-      render();
-      return;
-    }
-
+  function countExpectedItem(matchedItem){
     var key = itemKey(matchedItem);
     scannedCounts[key] = (scannedCounts[key] || 0) + 1;
     resolvedKeys[key] = true;
@@ -816,7 +868,127 @@
     render();
   }
 
+  function handleScanResult(scannedCode, source){
+    if(document.getElementById('scannerOverlay').style.display !== 'flex') return;
+    var scanned = (scannedCode || '').trim();
+    if(!scanned) return;
+    missedFrameCount = 0; // a successful detection means it's still there, whichever code it is
+
+    // Same code still sitting in frame from the last detection — not a
+    // new physical item, ignore it until it actually disappears first.
+    if(scanned === currentlyVisibleCode) return;
+    currentlyVisibleCode = scanned;
+
+    if(scanMode === 'extra'){
+      if(extraScanPending) return;
+      extraScanPending = true;
+      closeScanner();
+      var qtyText = prompt('How many physical items have this barcode ' + scanned + '?', '1');
+      if(qtyText === null){ extraScanPending = false; return; }
+      qtyText = qtyText.trim();
+      var extraQty = Number(qtyText);
+      if(!/^\d+$/.test(qtyText) || !Number.isSafeInteger(extraQty) || extraQty < 1 || extraQty > 1000){
+        alert('Enter a whole-number quantity from 1 to 1000. Nothing was added.');
+        extraScanPending = false;
+        return;
+      }
+      extraScans[scanned] = (extraScans[scanned] || 0) + extraQty;
+      extraDetails[scanned] = { source:source === 'entered' ? 'entered' : 'scan', lookupStatus:'pending' };
+      playScanFeedback();
+      render();
+      fetch('/api/lookup-received-barcode', {
+        method:'POST', headers:{ 'Content-Type':'application/json' },
+        body:JSON.stringify({ access:storeAccessToken, store:storeName, code:scanned })
+      }).then(function(response){ return response.ok ? response.json() : { status:'unavailable' }; })
+      .then(function(result){
+        if(!extraScans[scanned]) return;
+        extraDetails[scanned] = { source:source === 'entered' ? 'entered' : 'scan', lookupStatus:result.status,
+          title:result.status === 'matched' ? result.title : '', sku:result.status === 'matched' ? result.sku : '' };
+        render();
+      }).catch(function(){
+        if(!extraScans[scanned]) return;
+        extraDetails[scanned] = { source:source === 'entered' ? 'entered' : 'scan', lookupStatus:'unavailable' };
+        render();
+      }).finally(function(){ extraScanPending = false; });
+      return;
+    }
+
+    var matchedItem = window.HFReceivingBarcode.expectedItem(expected.items, scanned);
+    if(matchedItem){ countExpectedItem(matchedItem); return; }
+    document.getElementById('scanProgressLabel').textContent = 'Checking barcode against the product catalog…';
+    fetch('/api/lookup-received-barcode', {
+      method:'POST', headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify({ access:storeAccessToken, store:storeName, code:scanned })
+    }).then(function(r){ return r.ok ? r.json() : { status:'unavailable' }; })
+    .then(function(result){
+      var knownOrderItem = result.status === 'matched' ? expected.items.filter(function(item){ return item.sku === result.sku; }) : [];
+      if(knownOrderItem.length === 1){ countExpectedItem(knownOrderItem[0]); return; }
+      extraScans[scanned] = (extraScans[scanned] || 0) + 1;
+      extraDetails[scanned] = { source:source === 'entered' ? 'entered' : 'scan', title:result.status === 'matched' ? result.title : '',
+        sku:result.status === 'matched' ? result.sku : '', lookupStatus:result.status };
+      document.getElementById('scanProgressLabel').textContent = result.status === 'matched'
+        ? result.title + ' is not on this order — inventory review required'
+        : 'Barcode not on this order — inventory review required';
+      playScanFeedback();
+      render();
+    }).catch(function(){
+      extraScans[scanned] = (extraScans[scanned] || 0) + 1;
+      extraDetails[scanned] = { source:source === 'entered' ? 'entered' : 'scan', lookupStatus:'unavailable' };
+      document.getElementById('scanProgressLabel').textContent = 'Catalog unavailable — barcode saved for review';
+      playScanFeedback();
+      render();
+    });
+  }
+
+  var submissionInFlight = false;
+  var reportStatusTimer = null;
+
+  function reportIsRetrying(report){
+    return (report.nextFoodRetryAt && Number(report.foodRetryAttempts || 0) < 12) ||
+      (report.nextRetailRetryAt && Number(report.retailRetryAttempts || 0) < 12);
+  }
+
+  function renderFinishedReport(report){
+    var main = document.getElementById('mainContent');
+    var status = report.inventoryReconciliation || {};
+    var retrying = reportIsRetrying(report);
+    var good = ['corrected', 'conversion_posted', 'receipt_verified'].includes(status.status);
+    var html = '<div class="result-banner ' + (report.hasErrors ? 'bad' : 'good') + '">'
+      + (report.hasErrors ? '⚠ ' + report.errorPercent + '% receiving discrepancy recorded' : '✓ All items matched')
+      + '</div>';
+    html += '<div class="result-banner ' + (good ? 'good' : retrying ? 'pending' : 'bad') + '">'
+      + (retrying && !good ? '⏳ Posting inventory correction now' : escapeHtml(status.label || 'Inventory status not confirmed'))
+      + (status.correctedAt ? '<div class="result-detail">Shopify confirmed ' + escapeHtml(new Date(status.correctedAt).toLocaleString()) + '</div>' : '')
+      + '<div class="result-detail">' + escapeHtml(status.detail || 'Logistics will review this receipt.') + '</div>'
+      + '</div>';
+    if(status.correctionLines && status.correctionLines.length){
+      html += '<div class="result-detail">' + status.correctionLines.map(function(line){
+        return escapeHtml(line.title + ': ' + (line.status === 'corrected' ? 'Shopify adjustment confirmed' : 'not yet corrected'));
+      }).join('<br>') + '</div>';
+    }
+    main.innerHTML = html;
+  }
+
+  function watchReportStatus(report){
+    if(reportStatusTimer) clearInterval(reportStatusTimer);
+    if(!reportIsRetrying(report)) return;
+    reportStatusTimer = setInterval(function(){
+      fetch('/api/receiving-report-status', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store: storeName, access: storeAccessToken, reportId: report.id })
+      }).then(function(response){ return response.json(); }).then(function(result){
+        if(!result.ok || !result.report) return;
+        renderFinishedReport(result.report);
+        if(!reportIsRetrying(result.report)){
+          clearInterval(reportStatusTimer);
+          reportStatusTimer = null;
+        }
+      }).catch(function(){ /* Keep the last verified state and try again. */ });
+    }, 5000);
+  }
+
   function finishCheck(){
+    if(submissionInFlight) return;
     // Belt-and-suspenders: the button itself is disabled while items are
     // unresolved, but this is the actual gate that decides whether a
     // submission is allowed through, so it has to hold even if the
@@ -834,6 +1006,7 @@
       return;
     }
     if(!confirm('Finish the receiving check for ' + storeName + '? This locks in what was scanned.')) return;
+    submissionInFlight = true;
 
     fetch('/api/submit-receiving-check', {
       method: 'POST',
@@ -848,30 +1021,22 @@
         expectedItems: expected.items,
         scannedCounts: scannedCounts,
         extraScans: extraScans,
+        extraDetails: extraDetails,
       })
     })
       .then(function(r){ return r.json(); })
       .then(function(result){
         var main = document.getElementById('mainContent');
         if(!result.ok){
+          submissionInFlight = false;
           main.innerHTML = '<div class="error-state">Could not submit: ' + escapeHtml(result.error || 'unknown error') + '</div>';
           return;
         }
-        var hasErrors = result.report.hasErrors;
-        var html = '<div class="result-banner ' + (hasErrors ? 'bad' : 'good') + '">'
-          + (hasErrors ? '⚠ ' + result.report.errorPercent + '% discrepancy — logged' : '✓ All good — everything matched')
-          + '</div>';
-        var posResults = result.report.posInventoryResults || [];
-        if(posResults.length){
-          var needsReview = posResults.some(function(item){ return !['posted','already_posted','zero_received'].includes(item.status); });
-          html += '<div class="result-banner ' + (needsReview ? 'bad' : 'good') + '">'
-            + (needsReview ? '⚠ POS inventory needs review: ' : '✓ POS sell-unit inventory updated: ')
-            + posResults.map(function(item){ return escapeHtml((item.sku || 'Item') + ' — ' + (item.error || item.status)); }).join('; ')
-            + '</div>';
-        }
-        main.innerHTML = html;
+        renderFinishedReport(result.report);
+        watchReportStatus(result.report);
       })
       .catch(function(err){
+        submissionInFlight = false;
         alert('Could not submit: ' + err.message);
       });
   }

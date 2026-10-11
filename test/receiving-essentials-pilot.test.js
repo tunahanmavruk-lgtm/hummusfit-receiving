@@ -73,7 +73,7 @@ test("Receiving sends a scoped receipt without holding Shopify credentials or ch
   assert.match(server, /STORES\.includes\(store\) && retail\.length/);
   assert.match(server, /\/api\/essentials-pos-receipt/);
   assert.match(html, /These items never enter POS inventory/);
-  assert.match(html, /POS sell-unit inventory updated/);
+  assert.match(html, /Mapped items post as sell-units to this store after the receipt is submitted/);
   for (const forbidden of ["inventoryAdjust", "inventorySet", "shopifyGraphQL", "/api/pos-inventory"]) {
     assert.equal((server + html).includes(forbidden), false, `must not contain ${forbidden}`);
   }

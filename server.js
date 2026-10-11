@@ -267,6 +267,30 @@ function signPosReceiptToken() {
   return `${payloadPart}.${signature}`;
 }
 
+// Identify an off-order physical barcode without changing inventory.
+// Only an exact, unique catalog match can be displayed to store staff.
+app.post("/api/lookup-received-barcode", requireStoreAccess, async (req, res) => {
+  const store = String(req.body?.store || "");
+  const code = String(req.body?.code || "").trim();
+  if (!POS_STORES.has(store) || !/^[A-Za-z0-9_-]{5,60}$/.test(code)) {
+    return res.status(400).json({ error: "A valid Hummus Fit store and barcode are required" });
+  }
+  const token = signPosReceiptToken();
+  if (!token) return res.status(503).json({ error: "Secure barcode lookup is unavailable" });
+  try {
+    const response = await fetch(`${ROUTE_BOARD_URL}/api/receiving-barcode-lookup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ store, code }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const result = await response.json();
+    return res.status(response.status).json(result);
+  } catch {
+    return res.status(502).json({ error: "Catalog barcode lookup is temporarily unavailable" });
+  }
+});
+
 app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => {
   const { store, orderId, orderName, pickedBy, receivedBy, expectedItems, scannedCounts, extraScans } = req.body;
   if (!store || !expectedItems || !scannedCounts) {
