@@ -426,6 +426,65 @@ app.get("/api/reports", requireReportsManager, (req, res) => {
   })) });
 });
 
+// Retry a previously saved, discrepancy-free Retail Essentials receipt after
+// an approved case-to-unit mapping is added. Only the exact saved counts are
+// submitted; Route Board owns the Shopify write and its idempotency ledger.
+app.post("/api/retry-retail-conversion", requireReportsManager, async (req, res) => {
+  const reportId = String(req.body?.reportId || "");
+  const report = loadReports().find((entry) => entry.id === reportId);
+  if (!report || !POS_STORES.has(report.store) || !report.orderId || report.hasErrors ||
+      (report.extraItems || []).length) {
+    return res.status(400).json({ error: "An exact, discrepancy-free Hummus Fit POS report is required" });
+  }
+  const retail = (report.items || []).filter((item) => item.receivingCategory === "retail_essentials");
+  if (!retail.length || retail.some((item) =>
+    !item.sku || !Number.isSafeInteger(item.actuallyReceived) || item.actuallyReceived < 0 ||
+    item.actuallyReceived !== item.expectedFromPicking || item.actuallyReceived !== item.orderedQty)) {
+    return res.status(400).json({ error: "Retail cases must exactly match the saved order, pick, and receipt" });
+  }
+  const token = signPosReceiptToken();
+  if (!token) return res.status(503).json({ error: "Secure POS receipt is unavailable" });
+  try {
+    const response = await fetch(`${ROUTE_BOARD_URL}/api/essentials-pos-receipt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        store: report.store, orderId: report.orderId,
+        receivedCounts: Object.fromEntries(retail.map((item) => [item.sku, item.actuallyReceived])),
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const result = await response.json();
+    const postings = Array.isArray(result.results) ? result.results : [];
+    if (!response.ok || !result.ok || postings.length !== retail.length ||
+        retail.some((item) => !postings.some((entry) => entry.sku === item.sku &&
+          ((item.actuallyReceived === 0 && entry.status === "zero_received") ||
+            (item.actuallyReceived > 0 && ["posted", "already_posted"].includes(entry.status) &&
+              /^gid:\/\/shopify\/InventoryAdjustmentGroup\/[0-9]+$/.test(entry.adjustmentId || "") &&
+              Number.isSafeInteger(entry.units) && entry.units > 0))))) {
+      return res.status(409).json({ error: "Shopify case-to-unit posting was not confirmed", results: postings });
+    }
+    const reports = loadReports();
+    const index = reports.findIndex((entry) => entry.id === reportId &&
+      entry.submittedAt === report.submittedAt && entry.orderId === report.orderId);
+    if (index < 0) return res.status(409).json({ error: "Saved report changed during retry", results: postings });
+    reports[index].posInventoryResults = postings;
+    reports[index].posInventoryWritesEnabled = true;
+    for (const item of reports[index].items) {
+      const posting = postings.find((entry) => entry.sku === item.sku &&
+        ["posted", "already_posted"].includes(entry.status));
+      if (posting) {
+        item.posInventoryWriteEnabled = true;
+        item.posInventoryPostedUnits = posting.units;
+      }
+    }
+    saveReports(reports);
+    res.json({ ok: true, report: { ...reports[index], inventoryReconciliation: reconciliationStatus(reports[index]) } });
+  } catch (error) {
+    res.status(502).json({ error: `POS conversion retry failed: ${error.message}` });
+  }
+});
+
 // History for one specific store, most recent first — for the
 // per-location trend view.
 app.get("/api/reports/:store", requireReportsManager, (req, res) => {
