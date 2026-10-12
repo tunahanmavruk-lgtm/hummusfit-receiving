@@ -7,6 +7,7 @@ const { buildReceivingPolicy, receiptCountKey } = require("./receiving-policy");
 const { reconciliationStatus, POS_STORES } = require("./reconciliation-status");
 const { cleanExtraLines, verifyExtraLines } = require("./receiving-extra-evidence");
 const { retryRetailLines, mergeRetailPostings } = require("./retail-conversion-retry");
+const { verifiedCorrection, mergeVerifiedCorrection, readCorrectionProof } = require("./verified-correction");
 
 const app = express();
 app.use(express.json());
@@ -471,6 +472,26 @@ app.post("/api/retry-retail-conversion", requireReportsManager, async (req, res)
 
 // History for one specific store, most recent first — for the
 // per-location trend view.
+app.post("/api/import-verified-food-correction", requireReportsManager, async (req, res) => {
+  const { reportId, sku, adjustmentId } = req.body || {};
+  const report = loadReports().find(r => r.id === reportId);
+  if (!report || typeof sku !== "string" || !/^gid:\/\/shopify\/InventoryAdjustmentGroup\/\d+$/.test(adjustmentId || "")) {
+    return res.status(400).json({ error: "Exact report, SKU and Shopify adjustment ID required" });
+  }
+  try {
+    const proof = await readCorrectionProof(adjustmentId, report.orderId);
+    const reports = loadReports();
+    const current = reports.find(r => r.id === reportId);
+    if (!current || current.orderId !== report.orderId || current.store !== report.store) throw new Error("Report changed during verification");
+    const correction = verifiedCorrection(current, sku, proof.node, proof.order);
+    mergeVerifiedCorrection(current, correction);
+    saveReports(reports);
+    res.json({ ok: true, correction, reconciliation: reconciliationStatus(current) });
+  } catch (error) {
+    res.status(409).json({ error: error.message });
+  }
+});
+
 app.get("/api/reports/:store", requireReportsManager, (req, res) => {
   const reports = loadReports().filter((r) => r.store === req.params.store);
   res.json({ reports: reports.slice().reverse().map((report) => ({
