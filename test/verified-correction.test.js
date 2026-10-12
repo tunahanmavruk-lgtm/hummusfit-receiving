@@ -21,6 +21,7 @@ test('exact Shopify proof closes the discrepancy without writing inventory',()=>
   assert.equal(reconciliationStatus(report).status,'corrected');
 });
 const invalid={
+  'ambiguous store tags':f=>f.order.customer.tags.push('Hummus Fit Holbrook'),
   'wrong location':f=>f.group.changes[0].location.id='gid://shopify/Location/1',
   'wrong delta':f=>f.group.changes[0].delta=-2,
   'wrong inventory item':f=>f.group.changes[0].item.id='gid://shopify/InventoryItem/9',
@@ -53,4 +54,8 @@ test('refuses replacing an existing correction or conflicting location',()=>{
   assert.throws(()=>mergeVerifiedCorrection(f.report,{...c,adjustmentId:'gid://shopify/InventoryAdjustmentGroup/222'}));
   f.report.inventoryLocationId='gid://shopify/Location/1';
   assert.throws(()=>mergeVerifiedCorrection(f.report,c));
+});
+test('canonical store tag identifies Miller Place even without generic marketing tag',()=>{
+  const f=fixture();f.order.customer.tags=['Hummus Fit Miller Place','Miller Place'];
+  assert.equal(verifiedCorrection(f.report,'FOOD',f.group,f.order).store,'Miller Place');
 });

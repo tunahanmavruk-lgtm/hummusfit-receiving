@@ -34,7 +34,8 @@ function verifiedCorrection(report, sku, group, order) {
   }
   const tags = (order.customer?.tags || []).map(t=>t.toLowerCase());
   const storeTags = report.store === 'Islip' ? ['hummus fit islip','hummus fit east islip'] : [`hummus fit ${report.store.toLowerCase()}`];
-  if (!tags.includes('hummus fit store') || !storeTags.some(t=>tags.includes(t))) throw new Error('Order destination does not match report store');
+  const destinations=Object.keys(LOCATIONS).filter(store=>tags.includes(`hummus fit ${store.toLowerCase()}`) || (store==='Islip' && tags.includes('hummus fit east islip')));
+  if (destinations.length!==1 || destinations[0]!==report.store || !storeTags.some(t=>tags.includes(t))) throw new Error('Order destination does not match report store');
   const items = report.items.map((item,index)=>({...item,index})).filter(i=>i.sku===sku);
   const lines = order.lineItems.nodes.filter(i=>i.sku===sku);
   if (items.length!==1 || lines.length!==1) throw new Error('SKU is missing or ambiguous');
