@@ -17,14 +17,14 @@ const PROOF_QUERY = `query CorrectionProof($groupId:ID!,$orderId:ID!){
 
 function correctionKey(report, sku, kind='food') {
   return crypto.createHash('sha256').update(JSON.stringify([
-    kind==='zero_case'?'agent-hazar-zero-case':'agent-hazar-food',report.store,report.orderId,sku,
+    kind==='extra'?'agent-hazar-extra':kind==='zero_case'?'agent-hazar-zero-case':'agent-hazar-food',report.store,report.orderId,sku,
   ])).digest('hex');
 }
 
 // This path imports proof only; it cannot adjust stock. A manager cannot
 // close a report by supplying a status/quantity. Shopify is read independently.
-function verifiedCorrection(report, sku, group, order, kind='food') {
-  if(!['food','zero_case'].includes(kind) || report?.supersededBy) throw new Error('Current receipt correction kind required');
+function verifiedCorrection(report, sku, group, order, kind='food', variant=null) {
+  if(!['food','zero_case','extra'].includes(kind) || report?.supersededBy) throw new Error('Current receipt correction kind required');
   const locationId = LOCATIONS[report?.store] && `gid://shopify/Location/${LOCATIONS[report.store]}`;
   const submitted = Date.parse(report?.submittedAt);
   if (!locationId || !Number.isFinite(submitted) || submitted < Date.parse('2026-10-06T04:00:00Z') ||
@@ -37,6 +37,7 @@ function verifiedCorrection(report, sku, group, order, kind='food') {
   const storeTags = report.store === 'Islip' ? ['hummus fit islip','hummus fit east islip'] : [`hummus fit ${report.store.toLowerCase()}`];
   const destinations=Object.keys(LOCATIONS).filter(store=>tags.includes(`hummus fit ${store.toLowerCase()}`) || (store==='Islip' && tags.includes('hummus fit east islip')));
   if (destinations.length!==1 || destinations[0]!==report.store || !storeTags.some(t=>tags.includes(t))) throw new Error('Order destination does not match report store');
+  if(kind==='extra') return verifiedExtra(report,sku,group,order,variant,locationId,submitted);
   const items = report.items.map((item,index)=>({...item,index})).filter(i=>i.sku===sku);
   const lines = order.lineItems.nodes.filter(i=>i.sku===sku);
   if (items.length!==1 || lines.length!==1) throw new Error('SKU is missing or ambiguous');
@@ -67,6 +68,31 @@ function verifiedCorrection(report, sku, group, order, kind='food') {
     postedAt:group.createdAt,referenceDocumentUri:group.referenceDocumentUri};
 }
 
+function verifiedExtra(report,sku,group,order,variant,locationId,submitted) {
+  const matches=(report.extraItems||[]).map((e,index)=>({...e,index})).filter(e=>e.sku===sku);
+  const extra=matches[0];
+  if(matches.length!==1 || !sku || !extra.catalogVerified || extra.catalogStatus!=='matched' || extra.source!=='scan' ||
+    !Number.isSafeInteger(extra.qty) || extra.qty<1 || extra.variantId!==variant?.id ||
+    variant?.sku!==sku || variant?.inventoryItem?.sku!==sku ||
+    ![variant?.barcode,variant?.sku].filter(Boolean).includes(extra.code) ||
+    (variant?.product?.tags||[]).some(t=>/essentials/i.test(t)) ||
+    report.items.some(i=>i.sku===sku) || order.lineItems.nodes.some(i=>i.sku===sku)) {
+    throw new Error('One independently verified off-order scanned food item is required');
+  }
+  const changes=(group?.changes||[]).filter(c=>c.name==='available');
+  if(!/^gid:\/\/shopify\/InventoryAdjustmentGroup\/\d+$/.test(group?.id||'') ||
+    group.referenceDocumentUri!==`gid://agent-hazar-receiving/ExtraCorrection/${correctionKey(report,sku,'extra')}` ||
+    !Number.isFinite(Date.parse(group.createdAt)) || Date.parse(group.createdAt)<submitted ||
+    changes.length!==1 || changes[0].delta!==extra.qty || changes[0].location?.id!==locationId ||
+    changes[0].item?.id!==variant.inventoryItem.id || changes[0].item?.sku!==sku) {
+    throw new Error('Exact Shopify extra-item quantity, catalog item and store proof required');
+  }
+  return {status:'posted',shopifyVerified:true,catalogVerified:true,source:AGENT_LABEL,
+    reportId:report.id,store:report.store,orderId:report.orderId,discrepancyKey:`extra:${extra.index}`,
+    sku,delta:extra.qty,locationId,inventoryItemId:variant.inventoryItem.id,variantId:variant.id,
+    adjustmentId:group.id,postedAt:group.createdAt,referenceDocumentUri:group.referenceDocumentUri};
+}
+
 function mergeVerifiedCorrection(report, correction) {
   const previous=(report.inventoryCorrections || []).find(c=>c.discrepancyKey===correction.discrepancyKey);
   if (previous && previous.adjustmentId!==correction.adjustmentId) throw new Error('A different correction is already recorded');
@@ -75,7 +101,7 @@ function mergeVerifiedCorrection(report, correction) {
   report.inventoryCorrections=[...(report.inventoryCorrections || []).filter(c=>c.discrepancyKey!==correction.discrepancyKey),correction];
 }
 
-async function readCorrectionProof(groupId, orderId) {
+async function readCorrectionProof(groupId, orderId, variantId) {
   const secret=process.env.HF_LOGISTICS_HANDOFF_SECRET;
   if (!secret) throw new Error('Secure verification access is not configured');
   const payload=Buffer.from(JSON.stringify({sub:'hummusfit-receiving',scope:['essentials.receive'],exp:Math.floor(Date.now()/1000)+60})).toString('base64url');
@@ -83,7 +109,7 @@ async function readCorrectionProof(groupId, orderId) {
   const base=process.env.ROUTE_BOARD_URL || 'https://hummusfit-route-board-production.up.railway.app';
   const response=await fetch(`${base}/api/receiving-adjustment-proof`,{
     method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
-    body:JSON.stringify({groupId,orderId}),signal:AbortSignal.timeout(20000),
+    body:JSON.stringify({groupId,orderId,variantId}),signal:AbortSignal.timeout(20000),
   });
   if (!response.ok) throw new Error(`Shopify verification returned ${response.status}`);
   const result=await response.json();

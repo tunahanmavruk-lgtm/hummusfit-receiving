@@ -481,11 +481,13 @@ async function importVerifiedReceiptCorrection(req,res,kind='food') {
     return res.status(400).json({ error: "Exact report, SKU and Shopify adjustment ID required" });
   }
   try {
-    const proof = await readCorrectionProof(adjustmentId, report.orderId);
+    const extra=kind==='extra' ? (report.extraItems||[]).filter(e=>e.sku===sku) : [];
+    if(kind==='extra' && extra.length!==1) throw new Error('One exact scanned extra required');
+    const proof = await readCorrectionProof(adjustmentId, report.orderId,extra[0]?.variantId);
     const reports = loadReports();
     const current = reports.find(r => r.id === reportId);
     if (!current || current.orderId !== report.orderId || current.store !== report.store) throw new Error("Report changed during verification");
-    const correction = verifiedCorrection(current, sku, proof.node, proof.order,kind);
+    const correction = verifiedCorrection(current, sku, proof.node, proof.order,kind,proof.variant);
     mergeVerifiedCorrection(current, correction);
     saveReports(reports);
     res.json({ ok: true, correction, reconciliation: reconciliationStatus(current) });
@@ -495,6 +497,7 @@ async function importVerifiedReceiptCorrection(req,res,kind='food') {
 }
 app.post('/api/import-verified-food-correction',requireReportsManager,(req,res)=>importVerifiedReceiptCorrection(req,res,'food'));
 app.post('/api/import-verified-case-shortage',requireReportsManager,(req,res)=>importVerifiedReceiptCorrection(req,res,'zero_case'));
+app.post('/api/import-verified-extra-correction',requireReportsManager,(req,res)=>importVerifiedReceiptCorrection(req,res,'extra'));
 
 app.post('/api/confirm-latest-receipt',requireReportsManager,(req,res)=>{
   try {
