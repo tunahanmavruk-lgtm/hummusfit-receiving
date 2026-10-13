@@ -40,7 +40,9 @@ function confirmedCorrection(report, discrepancy, correction) {
        correction.delta !== Number(discrepancy.orderDiff))) return false;
   const submitted = Date.parse(report.submittedAt || "");
   const posted = Date.parse(correction.postedAt || "");
-  return Number.isFinite(submitted) && Number.isFinite(posted) && posted >= submitted;
+  // Shopify adjustment timestamps have second precision; receipt timestamps
+  // retain milliseconds. Exact order/item/location/delta checks above still apply.
+  return Number.isFinite(submitted) && Number.isFinite(posted) && posted >= Math.floor(submitted / 1000) * 1000;
 }
 
 function reconciliationStatus(report) {

@@ -13,6 +13,17 @@ function fixture(){
     changes:[{name:'available',delta:-1,item:{id:'gid://shopify/InventoryItem/111',sku:'FOOD'},location:{id:'gid://shopify/Location/105516073207'}}]};
   return {report,order,group};
 }
+test('same-second Shopify proof accepts millisecond receipts without replaying inventory',()=>{
+  const f=fixture();f.report.submittedAt='2026-10-12T14:00:00.999Z';
+  const c=verifiedCorrection(f.report,'FOOD',f.group,f.order);
+  mergeVerifiedCorrection(f.report,c);
+  assert.equal(reconciliationStatus(f.report).status,'corrected');
+  assert.equal(c.postedAt,'2026-10-12T14:00:00Z');
+  f.group.createdAt='2026-10-12T13:59:59Z';
+  assert.throws(()=>verifiedCorrection(f.report,'FOOD',f.group,f.order));
+  f.report.inventoryCorrections[0].postedAt=f.group.createdAt;
+  assert.equal(reconciliationStatus(f.report).status,'needs_review');
+});
 test('exact Shopify proof closes the discrepancy without writing inventory',()=>{
   const {report,order,group}=fixture();
   const correction=verifiedCorrection(report,'FOOD',group,order);

@@ -54,7 +54,7 @@ function verifiedCorrection(report, sku, group, order, kind='food', variant=null
   }
   if (!/^gid:\/\/shopify\/InventoryAdjustmentGroup\/\d+$/.test(group?.id || '') ||
       group.referenceDocumentUri!==`gid://agent-hazar-receiving/${kind==='zero_case'?'ZeroCaseShortage':'FoodCorrection'}/${correctionKey(report,sku,kind)}` ||
-      !Number.isFinite(Date.parse(group.createdAt)) || Date.parse(group.createdAt)<submitted) {
+      !Number.isFinite(Date.parse(group.createdAt)) || Date.parse(group.createdAt)<Math.floor(submitted / 1000) * 1000) {
     throw new Error('Shopify proof does not belong to this order and correction');
   }
   const changes=(group.changes || []).filter(c=>c.name==='available');
@@ -82,7 +82,7 @@ function verifiedExtra(report,sku,group,order,variant,locationId,submitted) {
   const changes=(group?.changes||[]).filter(c=>c.name==='available');
   if(!/^gid:\/\/shopify\/InventoryAdjustmentGroup\/\d+$/.test(group?.id||'') ||
     group.referenceDocumentUri!==`gid://agent-hazar-receiving/ExtraCorrection/${correctionKey(report,sku,'extra')}` ||
-    !Number.isFinite(Date.parse(group.createdAt)) || Date.parse(group.createdAt)<submitted ||
+    !Number.isFinite(Date.parse(group.createdAt)) || Date.parse(group.createdAt)<Math.floor(submitted / 1000) * 1000 ||
     changes.length!==1 || changes[0].delta!==extra.qty || changes[0].location?.id!==locationId ||
     changes[0].item?.id!==variant.inventoryItem.id || changes[0].item?.sku!==sku) {
     throw new Error('Exact Shopify extra-item quantity, catalog item and store proof required');
