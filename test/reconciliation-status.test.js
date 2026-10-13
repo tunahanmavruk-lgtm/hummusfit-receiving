@@ -148,6 +148,34 @@ test("unknown extras require catalog verification, and B2B cannot receive Agent 
   assert.equal(reconciliationStatus({ ...extra, store: "Brookfield", inventoryCorrections: [{ ...entry, catalogVerified: true }] }).status, "needs_review");
 });
 
+test('owner-linked existing manual Shopify correction resolves history without inventing a group or reposting stock', () => {
+  const r={id:'Woodbury::1',store:'Woodbury',orderId:'gid://shopify/Order/123',submittedAt:'2026-10-07T18:23:55Z',
+    items:[],extraItems:[{code:'I received 10 southwest quesadilla',qty:1}]};
+  const c={status:'verified_existing_manual',inventoryChanged:false,source:AGENT_LABEL,reportId:r.id,
+    orderId:r.orderId,store:r.store,discrepancyKey:'extra:0',originalCode:r.extraItems[0].code,originalQty:1,
+    locationId:'gid://shopify/Location/97226555639',inventoryItemId:'gid://shopify/InventoryItem/45957331681527',
+    variantId:'gid://shopify/ProductVariant/43861940109559',sku:'604947193841',title:'Southwest Chicken Quesadilla',
+    confirmedReceivedQty:10,delta:10,catalogVerified:true,offOrderVerified:true,
+    ownerConfirmation:{text:'Yes, that +10 fixed this receipt',confirmsExistingCorrection:true,confirmedAt:'2026-10-13T22:10:00Z'},
+    evidence:{type:'shopify_admin_inventory_history',createdBy:'Berke Kaba',postedAtMinute:'2026-10-09T12:13:00Z',
+      observedAt:'2026-10-13T22:00:00Z',availableDelta:10,onHandDelta:10,
+      locationId:'gid://shopify/Location/97226555639',inventoryItemId:'gid://shopify/InventoryItem/45957331681527',
+      url:'https://admin.shopify.com/store/myhummusfit/products/inventory/45957331681527/inventory_history'}};
+  const result=reconciliationStatus({...r,verifiedManualCorrections:[c]});
+  assert.equal(result.status,'corrected');assert.equal(result.correctionLines[0].diff,10);
+  assert.equal(result.correctionLines[0].adjustmentId,null);assert.equal(result.correctionLines[0].inventoryChanged,false);
+  assert.match(result.detail,/no inventory was posted again/);assert.equal(r.extraItems[0].qty,1);
+  for(const bad of [{...c,delta:1},{...c,inventoryChanged:true},{...c,originalQty:10},{...c,reportId:'wrong'},
+    {...c,locationId:'gid://shopify/Location/1'},{...c,catalogVerified:false},{...c,offOrderVerified:false},
+    {...c,ownerConfirmation:{}},{...c,evidence:{...c.evidence,availableDelta:1}},
+    {...c,evidence:{...c.evidence,url:'https://example.com'}},
+    {...c,evidence:{...c.evidence,postedAtMinute:'2026-10-01T00:00:00Z'}}]){
+    assert.equal(reconciliationStatus({...r,verifiedManualCorrections:[bad]}).status,'needs_review');
+  }
+  assert.equal(reconciliationStatus({...r,verifiedManualCorrections:[c,c]}).status,'needs_review');
+  assert.equal(reconciliationStatus({...r,items:[{sku:c.sku,diff:0}],verifiedManualCorrections:[c]}).status,'needs_review');
+});
+
 test("a Hummus Fit store sees ordered-versus-received gaps even if picking matched receipt", () => {
   const item = { ...caseItem, orderedQty: 3, expectedFromPicking: 2, actuallyReceived: 2, diff: 0, orderDiff: -1 };
   const result = reconciliationStatus({ ...report, items: [item], inventoryCorrections: [] });

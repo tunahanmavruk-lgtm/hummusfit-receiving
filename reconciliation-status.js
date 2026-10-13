@@ -7,6 +7,35 @@ const POS_STORES = new Set([
 ]);
 const AGENT_LABEL = "Agent Hazar – Receiving";
 
+// Manager-audited Shopify Admin history is distinct from an automated posting.
+// These records can only be attached by an operator, never by store submission.
+function existingManualCorrection(report, key) {
+  if (!POS_STORES.has(report.store) || !/^extra:\d+$/.test(key)) return null;
+  const records = (report.verifiedManualCorrections || []).filter(c => c.discrepancyKey === key);
+  if (records.length !== 1) return null;
+  const c = records[0], item = report.extraItems?.[Number(key.split(':')[1])];
+  const expectedLocations = require('./verified-correction').LOCATIONS;
+  if (!item || c.status !== 'verified_existing_manual' || c.inventoryChanged !== false ||
+      c.source !== AGENT_LABEL || c.reportId !== report.id || c.orderId !== report.orderId ||
+      c.store !== report.store || c.originalCode !== item.code || c.originalQty !== item.qty ||
+      c.locationId !== `gid://shopify/Location/${expectedLocations[report.store]}` ||
+      !Number.isSafeInteger(c.confirmedReceivedQty) || c.confirmedReceivedQty < 1 ||
+      c.delta !== c.confirmedReceivedQty || !c.sku || !c.title ||
+      c.catalogVerified !== true || !/^gid:\/\/shopify\/InventoryItem\/\d+$/.test(c.inventoryItemId || '') ||
+      !/^gid:\/\/shopify\/ProductVariant\/\d+$/.test(c.variantId || '') ||
+      report.items.some(i => i.sku === c.sku) || c.offOrderVerified !== true ||
+      c.ownerConfirmation?.confirmsExistingCorrection !== true || !c.ownerConfirmation?.text ||
+      !Number.isFinite(Date.parse(c.ownerConfirmation?.confirmedAt)) ||
+      c.evidence?.type !== 'shopify_admin_inventory_history' ||
+      c.evidence.locationId !== c.locationId || c.evidence.inventoryItemId !== c.inventoryItemId ||
+      c.evidence.availableDelta !== c.delta || c.evidence.onHandDelta !== c.delta ||
+      !c.evidence.createdBy || !Number.isFinite(Date.parse(c.evidence.observedAt)) ||
+      !Number.isFinite(Date.parse(c.evidence.postedAtMinute)) ||
+      Date.parse(c.evidence.postedAtMinute) < Date.parse(report.submittedAt) ||
+      c.evidence.url !== `https://admin.shopify.com/store/myhummusfit/products/inventory/${c.inventoryItemId.split('/').pop()}/inventory_history`) return null;
+  return c;
+}
+
 function discrepancyEntries(report) {
   const items = Array.isArray(report.items) ? report.items : [];
   const extras = Array.isArray(report.extraItems) ? report.extraItems : [];
@@ -15,9 +44,12 @@ function discrepancyEntries(report) {
       (POS_STORES.has(report.store) && item.orderDiff !== null && item.orderDiff !== undefined && Number(item.orderDiff) !== 0)
       ? [{ key: `item:${index}`, title: item.title || item.sku || "Item", sku: item.sku || "", diff: Number(item.diff), orderDiff: item.orderDiff, kind: "ordered_item", category: item.receivingCategory }]
       : []),
-    ...extras.flatMap((item, index) => Number(item.qty) > 0
-      ? [{ key: `extra:${index}`, title: item.catalogVerified === true && item.catalogStatus === 'matched' ? (item.title || item.code) : (item.code || "Unidentified item"), sku: item.catalogVerified === true && item.catalogStatus === 'matched' ? (item.sku || "") : "", diff: Number(item.qty), kind: "extra_item" }]
-      : []),
+    ...extras.flatMap((item, index) => {
+      const manual = existingManualCorrection(report, `extra:${index}`);
+      return Number(item.qty) > 0
+        ? [{ key: `extra:${index}`, title: manual?.title || (item.catalogVerified === true && item.catalogStatus === 'matched' ? (item.title || item.code) : (item.code || "Unidentified item")), sku: manual?.sku || (item.catalogVerified === true && item.catalogStatus === 'matched' ? (item.sku || "") : ""), diff: manual?.confirmedReceivedQty || Number(item.qty), kind: "extra_item" }]
+        : [];
+    }),
   ];
 }
 
@@ -80,11 +112,13 @@ function reconciliationStatus(report) {
   const corrections = Array.isArray(report.inventoryCorrections) ? report.inventoryCorrections : [];
   const correctionLines = discrepancies.map((entry) => {
     const correction = corrections.find((candidate) => confirmedCorrection(report, entry, candidate));
-    return { ...entry, status: entry.category === 'other_essentials' ? 'receipt_only' : correction ? "corrected" : "pending",
+    const manual = existingManualCorrection(report, entry.key);
+    return { ...entry, status: entry.category === 'other_essentials' ? 'receipt_only' : correction || manual ? "corrected" : "pending",
       adjustmentId: correction?.adjustmentId || null,
-      postedAt: correction?.postedAt || null,
-      locationId: correction?.locationId || null,
-      delta: correction?.delta || null };
+      postedAt: correction?.postedAt || manual?.evidence?.postedAtMinute || null,
+      locationId: correction?.locationId || manual?.locationId || null,
+      delta: correction?.delta || manual?.delta || null,
+      ...(manual ? {resolution:'verified_existing_manual',evidenceUrl:manual.evidence.url,createdBy:manual.evidence.createdBy,inventoryChanged:false} : {}) };
   });
   const correctedCount = correctionLines.filter((entry) => entry.status === "corrected").length;
   const pendingCount = correctionLines.filter((entry) => entry.status === 'pending').length;
@@ -106,7 +140,7 @@ function reconciliationStatus(report) {
     return { status,
       label: status === 'receipt_exception' ? 'Supply exception — logistics follow-up' : status === "corrected" ? `Solved by ${AGENT_LABEL}` :
         status === "partially_corrected" ? `Partially corrected by ${AGENT_LABEL}` : "Inventory correction not confirmed",
-      detail: (pendingCount === 0 ? (correctedCount ? "Every inventory discrepancy has a confirmed Shopify adjustment at this store." : "No POS inventory adjustment is required for these receipt-only supplies.") :
+      detail: (pendingCount === 0 ? (correctedCount ? "Every inventory discrepancy has a confirmed Shopify adjustment at this store." + (correctionLines.some(c=>c.resolution==='verified_existing_manual') ? " Existing manual correction verified by Agent Hazar; no inventory was posted again." : '') : "No POS inventory adjustment is required for these receipt-only supplies.") :
         `${pendingCount} discrepant line${pendingCount === 1 ? "" : "s"} still need${pendingCount === 1 ? "s" : ""} a confirmed Shopify adjustment. ` +
         (['queued','processing','retry'].includes(report.automation?.status) ? 'Agent Hazar is processing or safely retrying this saved receipt.' :
           (report.automation?.error || report.automation?.results?.filter(r=>r.status!=='posted').map(r=>r.error).filter(Boolean).join('; ') || 'Logistics review is required; no unverified inventory change is marked solved.'))) +
