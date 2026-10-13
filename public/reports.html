@@ -118,6 +118,10 @@
   }
 
   function correctionNote(line){
+    if(line && line.status === 'corrected' && line.resolution === 'verified_existing_manual') return '<span class="correction-note corrected">✓ '
+      + 'Existing Shopify correction by ' + esc(line.createdBy) + ' at ' + esc(easternTime(line.postedAt))
+      + ' · Shopify ' + esc(line.delta > 0 ? '+' + line.delta : line.delta)
+      + ' · Verified by Agent Hazar – Receiving; no duplicate inventory change.</span>';
     if(line && line.status === 'corrected') return '<span class="correction-note corrected">✓ '
       + 'This store’s inventory was adjusted by Agent Hazar – Receiving at ' + esc(easternTime(line.postedAt))
       + ' · Shopify ' + esc(line.delta > 0 ? '+' + line.delta : line.delta)
@@ -128,7 +132,7 @@
   function render(reports){
     var el = document.getElementById('content');
     var filtered = currentFilter === 'errors' ? reports.filter(function(r){ return r.hasErrors; })
-      : currentFilter === 'inventory' ? reports.filter(function(r){ return r.inventoryReconciliation && r.inventoryReconciliation.status === 'needs_review'; })
+      : currentFilter === 'inventory' ? reports.filter(function(r){ return r.inventoryReconciliation && ['needs_review','partially_corrected'].includes(r.inventoryReconciliation.status); })
       : reports;
 
     if(filtered.length === 0){
