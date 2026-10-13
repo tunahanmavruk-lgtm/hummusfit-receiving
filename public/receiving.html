@@ -883,7 +883,7 @@
       if(extraScanPending) return;
       extraScanPending = true;
       closeScanner();
-      var qtyText = prompt('How many physical items have this barcode ' + scanned + '?', '1');
+      var qtyText = prompt('How many ADDITIONAL physical items have barcode ' + scanned + '? Do not include items already counted.', '1');
       if(qtyText === null){ extraScanPending = false; return; }
       qtyText = qtyText.trim();
       var extraQty = Number(qtyText);
@@ -904,6 +904,19 @@
         if(!extraScans[scanned]) return;
         extraDetails[scanned] = { source:source === 'entered' ? 'entered' : 'scan', lookupStatus:result.status,
           title:result.status === 'matched' ? result.title : '', sku:result.status === 'matched' ? result.sku : '' };
+        var onOrder=result.status==='matched' ? expected.items.filter(function(item){return item.sku===result.sku;}) : [];
+        if(onOrder.length===1){
+          var key=itemKey(onOrder[0]);
+          var totalText=prompt(result.title+' is already on this order. Enter the TOTAL received in this delivery, including all normal and extra items. This replaces its previous count of '+(scannedCounts[key]||0)+'.',String((scannedCounts[key]||0)+extraScans[scanned]));
+          var confirmed=window.HFReceivingBarcode.confirmedTotal(totalText);
+          if(confirmed!==null){
+            scannedCounts[key]=confirmed;
+            resolvedKeys[key]=true;
+            Object.keys(extraDetails).forEach(function(code){
+              if(extraDetails[code].lookupStatus==='matched'&&extraDetails[code].sku===result.sku){delete extraDetails[code];delete extraScans[code];}
+            });
+          } else if(totalText!==null){alert('The total must be a whole number from 0 to 1000. The extra item remains flagged for review.');}
+        }
         render();
       }).catch(function(){
         if(!extraScans[scanned]) return;

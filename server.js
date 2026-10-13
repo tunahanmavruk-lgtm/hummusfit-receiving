@@ -8,6 +8,7 @@ const { reconciliationStatus, POS_STORES } = require("./reconciliation-status");
 const { cleanExtraLines, verifyExtraLines } = require("./receiving-extra-evidence");
 const { retryRetailLines, mergeRetailPostings } = require("./retail-conversion-retry");
 const { verifiedCorrection, mergeVerifiedCorrection, readCorrectionProof } = require("./verified-correction");
+const { RELEASE: AUTOMATION_RELEASE, queueReport, createReconciliationWorker } = require('./automatic-reconciliation');
 
 const app = express();
 app.use(express.json());
@@ -174,7 +175,8 @@ function loadReports() {
   try {
     return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
   } catch (e) {
-    return [];
+    if (e.code === 'ENOENT') return [];
+    throw e; // Never turn an unreadable audit trail into an empty file.
   }
 }
 function saveReports(reports) {
@@ -359,7 +361,7 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
   const errorPercent = totalExpected > 0 ? Math.round((totalDiscrepant / totalExpected) * 1000) / 10 : 0;
 
   const report = {
-    id: store + "::" + Date.now(),
+    id: store + "::" + Date.now() + ':' + crypto.randomUUID(),
     store,
     orderId: orderId || "",
     orderName: orderName || "",
@@ -378,8 +380,14 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
   };
 
   const reports = loadReports();
+  queueReport(report);
   reports.push(report);
   saveReports(reports);
+
+  if (report.automation) {
+    receivingWorker.kick();
+    return res.json({ ok: true, report: { ...report, inventoryReconciliation: reconciliationStatus(report) } });
+  }
 
   const retail = expectedItems.filter((item) => buildReceivingPolicy(item).category === "retail_essentials");
   if (STORES.includes(store) && retail.length) {
@@ -414,8 +422,9 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
       }
     }
     // Replace the just-created report with the authoritative posting result.
-    reports[reports.length - 1] = report;
-    saveReports(reports);
+    const currentReports=loadReports();
+    const currentIndex=currentReports.findIndex(r=>r.id===report.id);
+    if(currentIndex>=0) { currentReports[currentIndex]=report; saveReports(currentReports); }
   }
   res.json({ ok: true, report: { ...report, inventoryReconciliation: reconciliationStatus(report) } });
 });
@@ -602,6 +611,26 @@ app.get(["/", "/index.html"], requireReportsManager, (req, res) => {
 app.get("/receiving.html", (req, res) => res.status(404).send("Not found"));
 
 app.use(express.static(path.join(__dirname, "public")));
+
+const receivingWorker=createReconciliationWorker({
+  loadReports,saveReports,readProof:readCorrectionProof,
+  async request(endpoint,body) {
+    if(process.env.RECEIVING_AUTOMATION_ENABLED==='false') throw new Error('Automatic receiving corrections are paused');
+    if(process.env.RAILWAY_ENVIRONMENT_ID && !fs.existsSync('/data')) throw new Error('Persistent receiving volume is unavailable');
+    const token=signPosReceiptToken();
+    if(!token) throw new Error('Secure receiving service access is unavailable');
+    const response=await fetch(`${ROUTE_BOARD_URL}${endpoint}`,{
+      method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+      body:JSON.stringify(body),signal:AbortSignal.timeout(60000),
+    });
+    const result=await response.json();
+    if(!response.ok) { const error=new Error(result.error||`Receiving service returned ${response.status}`);
+      error.review=[400,403,409].includes(response.status);throw error; }
+    return result;
+  },
+});
+app.get('/api/receiving-automation-health',(_req,res)=>res.json({version:AUTOMATION_RELEASE,stores:14,durableQueue:true}));
+receivingWorker.start();
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Receiving check app running on port ${PORT}`);

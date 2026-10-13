@@ -66,3 +66,9 @@ test('canonical store tag identifies Miller Place even without generic marketing
   const f=fixture();f.order.customer.tags=['Hummus Fit Miller Place','Miller Place'];
   assert.equal(verifiedCorrection(f.report,'FOOD',f.group,f.order).store,'Miller Place');
 });
+test('verified handheld barcode entry is eligible; free-form names are not',()=>{
+  const f=extraFixture();f.report.extraItems[0].source='entered';
+  assert.equal(verifiedCorrection(f.report,'EXTRA',f.group,f.order,'extra',f.variant).shopifyVerified,true);
+  f.report.extraItems[0].code='some bowl';
+  assert.throws(()=>verifiedCorrection(f.report,'EXTRA',f.group,f.order,'extra',f.variant));
+});

@@ -2,7 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { matches, expectedItem } = require('../public/receiving-barcode');
+const { matches, expectedItem, confirmedTotal } = require('../public/receiving-barcode');
+
+test('confirmed wrong-item total replaces a count only when explicit and valid',()=>{
+  assert.equal(confirmedTotal('0'),0);assert.equal(confirmedTotal(' 12 '),12);
+  for(const value of [null,undefined,'','abc','-1','1.5','1001'])assert.equal(confirmedTotal(value),null);
+});
 
 test('receiving accepts exact case aliases and UPC/EAN representations', () => {
   const items = [{ title:'Retail case', sku:'CASE-1', scanCodes:['CASE-1','850084224096'] }];

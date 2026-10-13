@@ -82,7 +82,9 @@ function reconciliationStatus(report) {
       label: status === 'receipt_exception' ? 'Supply exception — logistics follow-up' : status === "corrected" ? `Solved by ${AGENT_LABEL}` :
         status === "partially_corrected" ? `Partially corrected by ${AGENT_LABEL}` : "Inventory correction not confirmed",
       detail: (pendingCount === 0 ? (correctedCount ? "Every inventory discrepancy has a confirmed Shopify adjustment at this store." : "No POS inventory adjustment is required for these receipt-only supplies.") :
-        `${pendingCount} discrepant line${pendingCount === 1 ? "" : "s"} still need${pendingCount === 1 ? "s" : ""} a confirmed Shopify adjustment. Logistics review is required; automatic discrepancy corrections are not enabled.`) +
+        `${pendingCount} discrepant line${pendingCount === 1 ? "" : "s"} still need${pendingCount === 1 ? "s" : ""} a confirmed Shopify adjustment. ` +
+        (['queued','processing','retry'].includes(report.automation?.status) ? 'Agent Hazar is processing or safely retrying this saved receipt.' :
+          (report.automation?.error || report.automation?.results?.filter(r=>r.status!=='posted').map(r=>r.error).filter(Boolean).join('; ') || 'Logistics review is required; no unverified inventory change is marked solved.'))) +
         (conversionPending ? " Retail Essentials POS case conversion is also not confirmed." : "") +
         (receiptExceptionCount ? ` ${receiptExceptionCount} Other Essentials supply exception(s) remain recorded for logistics follow-up; no POS stock change applies.` : ''),
       discrepancyLines: discrepancies.length, correctedCount, pendingCount, receiptExceptionCount, correctionLines, postedUnits,

@@ -27,7 +27,12 @@
     });
     return found.length === 1 ? found[0] : null;
   }
-  var api = { matches:matches, expectedItem:expectedItem };
+  function confirmedTotal(value){
+    if(value===null || value===undefined || !/^\d+$/.test(String(value).trim())) return null;
+    var count=Number(String(value).trim());
+    return Number.isSafeInteger(count)&&count>=0&&count<=1000 ? count : null;
+  }
+  var api = { matches:matches, expectedItem:expectedItem, confirmedTotal:confirmedTotal };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.HFReceivingBarcode = api;
 })(typeof window !== 'undefined' ? window : globalThis);

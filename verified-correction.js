@@ -71,7 +71,7 @@ function verifiedCorrection(report, sku, group, order, kind='food', variant=null
 function verifiedExtra(report,sku,group,order,variant,locationId,submitted) {
   const matches=(report.extraItems||[]).map((e,index)=>({...e,index})).filter(e=>e.sku===sku);
   const extra=matches[0];
-  if(matches.length!==1 || !sku || !extra.catalogVerified || extra.catalogStatus!=='matched' || extra.source!=='scan' ||
+  if(matches.length!==1 || !sku || !extra.catalogVerified || extra.catalogStatus!=='matched' || !['scan','entered'].includes(extra.source) ||
     !Number.isSafeInteger(extra.qty) || extra.qty<1 || extra.variantId!==variant?.id ||
     variant?.sku!==sku || variant?.inventoryItem?.sku!==sku ||
     ![variant?.barcode,variant?.sku].filter(Boolean).includes(extra.code) ||
