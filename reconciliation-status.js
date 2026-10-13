@@ -37,12 +37,35 @@ function confirmedCorrection(report, discrepancy, correction) {
   if (discrepancy.kind === "ordered_item" &&
       (discrepancy.category === "other_essentials" || correction.sku !== discrepancy.sku ||
        !Number.isSafeInteger(Number(discrepancy.orderDiff)) ||
-       correction.delta !== Number(discrepancy.orderDiff))) return false;
+       (correction.delta !== Number(discrepancy.orderDiff) &&
+        !confirmedUnitShortage(report, discrepancy, correction)))) return false;
   const submitted = Date.parse(report.submittedAt || "");
   const posted = Date.parse(correction.postedAt || "");
   // Shopify adjustment timestamps have second precision; receipt timestamps
   // retain milliseconds. Exact order/item/location/delta checks above still apply.
   return Number.isFinite(submitted) && Number.isFinite(posted) && posted >= Math.floor(submitted / 1000) * 1000;
+}
+
+// Legacy case shortages were reversed on the sell-unit inventory item after
+// conversion. Recognize that proof in its original units; never replay stock.
+function confirmedUnitShortage(report, discrepancy, correction) {
+  if (discrepancy.category !== 'retail_essentials' || discrepancy.orderDiff >= 0 ||
+      !/^gid:\/\/agent-hazar-receiving\/Report\/[a-f0-9]{64}$/.test(correction.referenceDocumentUri || '') ||
+      !correction.posSku || correction.posSku === correction.sku) return false;
+  const item = report.items.find((i, index) => `item:${index}` === discrepancy.key);
+  const units = item?.unitsPerCase;
+  const posting = (report.posInventoryResults || []).find(r => r.sku === discrepancy.sku);
+  return Number.isSafeInteger(units) && units > 0 &&
+    Number.isSafeInteger(item.orderedQty) && item.orderedQty > 0 &&
+    item.expectedFromPicking === item.orderedQty &&
+    correction.pickedCases === item.expectedFromPicking &&
+    correction.receivedCases === item.actuallyReceived &&
+    item.actuallyReceived - item.orderedQty === discrepancy.orderDiff &&
+    item.posInventoryPostedUnits === item.expectedFromPicking * units &&
+    ['posted', 'already_posted'].includes(posting?.status) &&
+    /^gid:\/\/shopify\/InventoryAdjustmentGroup\/\d+$/.test(posting.adjustmentId || '') &&
+    posting.units === item.posInventoryPostedUnits &&
+    correction.delta === discrepancy.orderDiff * units;
 }
 
 function reconciliationStatus(report) {

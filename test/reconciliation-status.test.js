@@ -107,6 +107,25 @@ test("zero received cases do not require a POS unit conversion", () => {
   assert.equal(result.status, "corrected");
 });
 
+test('verified legacy sell-unit shortage is compared with case quantity times pack size', () => {
+  const item = { ...caseItem, orderedQty: 1, expectedFromPicking: 1, actuallyReceived: 0,
+    diff: -1, orderDiff: -1, unitsPerCase: 12, posInventoryPostedUnits: 12 };
+  const r = { ...report, items: [item], posInventoryResults: [{sku:'CASE-8',status:'posted',units:12,
+    adjustmentId:'gid://shopify/InventoryAdjustmentGroup/898'}] };
+  const c = {...correction('item:0','CASE-8',900),delta:-12,posSku:'UNIT-1',pickedCases:1,receivedCases:0,
+    referenceDocumentUri:'gid://agent-hazar-receiving/Report/'+'a'.repeat(64)};
+  assert.equal(reconciliationStatus({...r,inventoryCorrections:[c]}).status,'corrected');
+  for(const bad of [{...c,delta:-24},{...c,receivedCases:1},{...c,pickedCases:2},
+    {...c,posSku:''},{...c,shopifyVerified:false},{...c,referenceDocumentUri:'other'}]) {
+    assert.equal(reconciliationStatus({...r,inventoryCorrections:[bad]}).status,'needs_review');
+  }
+  for(const bad of [{...item,unitsPerCase:8},{...item,posInventoryPostedUnits:0},
+    {...item,receivingCategory:'food'},{...item,expectedFromPicking:0}]) {
+    assert.equal(reconciliationStatus({...r,items:[bad],inventoryCorrections:[c]}).status,'needs_review');
+  }
+  assert.equal(reconciliationStatus({...r,posInventoryResults:[],inventoryCorrections:[c]}).status,'needs_review');
+});
+
 test("a claim without the exact store, order, verified Shopify group, and timestamp cannot say solved", () => {
   const bad = [
     { ...correction("item:0", "CASE-8", 900), store: "Islip" },
