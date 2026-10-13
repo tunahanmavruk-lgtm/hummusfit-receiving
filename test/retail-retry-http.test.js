@@ -27,7 +27,12 @@ test('HTTP retry persists a partial ledger result and rejects unauthenticated wr
   const mock = http.createServer(async (req,res) => {
     assert.equal(req.url,'/api/essentials-pos-receipt');
     let body=''; for await (const chunk of req) body+=chunk;
-    assert.deepEqual(JSON.parse(body),{store:'Lake Grove',orderId:'gid://shopify/Order/123',receivedCounts:{SOUR:1,COKE:1}});
+    const payload=JSON.parse(body);
+    assert.deepEqual(payload.receivedCounts,{SOUR:1,COKE:1});
+    assert.equal(payload.store,'Lake Grove');
+    assert.equal(payload.orderId,'gid://shopify/Order/123');
+    assert.equal(payload.receiptEvidence.id,'Lake Grove::test');
+    assert.equal(payload.receiptEvidence.items.length,2);
     calls++;
     res.setHeader('Content-Type','application/json');
     res.end(JSON.stringify({ok:false,results:[

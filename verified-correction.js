@@ -15,15 +15,16 @@ const PROOF_QUERY = `query CorrectionProof($groupId:ID!,$orderId:ID!){
     fulfillments(first:50){status location{id}}}
 }`;
 
-function correctionKey(report, sku) {
+function correctionKey(report, sku, kind='food') {
   return crypto.createHash('sha256').update(JSON.stringify([
-    'agent-hazar-food',report.store,report.orderId,sku,
+    kind==='zero_case'?'agent-hazar-zero-case':'agent-hazar-food',report.store,report.orderId,sku,
   ])).digest('hex');
 }
 
 // This path imports proof only; it cannot adjust stock. A manager cannot
 // close a report by supplying a status/quantity. Shopify is read independently.
-function verifiedCorrection(report, sku, group, order) {
+function verifiedCorrection(report, sku, group, order, kind='food') {
+  if(!['food','zero_case'].includes(kind) || report?.supersededBy) throw new Error('Current receipt correction kind required');
   const locationId = LOCATIONS[report?.store] && `gid://shopify/Location/${LOCATIONS[report.store]}`;
   const submitted = Date.parse(report?.submittedAt);
   if (!locationId || !Number.isFinite(submitted) || submitted < Date.parse('2026-10-06T04:00:00Z') ||
@@ -41,13 +42,17 @@ function verifiedCorrection(report, sku, group, order) {
   if (items.length!==1 || lines.length!==1) throw new Error('SKU is missing or ambiguous');
   const item=items[0], line=lines[0];
   const delta=item.actuallyReceived-item.orderedQty;
-  if (item.receivingCategory!=='food' || !Number.isSafeInteger(item.actuallyReceived) ||
+  const category=kind==='zero_case'?'retail_essentials':'food';
+  if(kind==='zero_case' && (item.actuallyReceived!==0 || item.expectedFromPicking!==0 ||
+    item.posInventoryPostedUnits>0 || !(report.posInventoryResults||[]).some(r=>r.sku===sku&&r.status==='zero_received') ||
+    (report.posInventoryResults||[]).some(r=>r.sku===sku&&['posted','already_posted'].includes(r.status)))) throw new Error('Zero-case shortage must have no prior POS conversion');
+  if (item.receivingCategory!==category || !Number.isSafeInteger(item.actuallyReceived) ||
       item.actuallyReceived<0 || !Number.isSafeInteger(item.orderedQty) || item.orderedQty<1 ||
       item.orderedQty!==line.quantity || !Number.isSafeInteger(delta) || !delta || delta!==item.orderDiff) {
     throw new Error('Exact saved food discrepancy is required');
   }
   if (!/^gid:\/\/shopify\/InventoryAdjustmentGroup\/\d+$/.test(group?.id || '') ||
-      group.referenceDocumentUri!==`gid://agent-hazar-receiving/FoodCorrection/${correctionKey(report,sku)}` ||
+      group.referenceDocumentUri!==`gid://agent-hazar-receiving/${kind==='zero_case'?'ZeroCaseShortage':'FoodCorrection'}/${correctionKey(report,sku,kind)}` ||
       !Number.isFinite(Date.parse(group.createdAt)) || Date.parse(group.createdAt)<submitted) {
     throw new Error('Shopify proof does not belong to this order and correction');
   }

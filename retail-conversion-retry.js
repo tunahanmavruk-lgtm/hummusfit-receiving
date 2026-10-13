@@ -3,7 +3,7 @@ const { POS_STORES } = require('./reconciliation-status');
 // An unrelated food discrepancy must not strand a verified retail receipt.
 // Retail discrepancies and unknown extras still require their own review.
 function retryRetailLines(report) {
-  if (!report || !POS_STORES.has(report.store) || !report.orderId ||
+  if (!report || report.supersededBy || !POS_STORES.has(report.store) || !report.orderId ||
       !Number.isFinite(Date.parse(report.submittedAt)) ||
       Date.parse(report.submittedAt) < Date.parse('2026-10-06T04:00:00Z') ||
       (report.extraItems || []).length) {
@@ -13,7 +13,7 @@ function retryRetailLines(report) {
   if (!retail.length || new Set(retail.map(item => item.sku)).size !== retail.length ||
       retail.some(item => !item.sku || !Number.isSafeInteger(item.actuallyReceived) ||
         item.actuallyReceived < 0 || item.actuallyReceived !== item.expectedFromPicking ||
-        item.actuallyReceived !== item.orderedQty)) {
+        (item.actuallyReceived !== item.orderedQty && item.actuallyReceived !== 0))) {
     throw new Error('Retail cases must exactly match the saved order, pick, and receipt');
   }
   return retail;

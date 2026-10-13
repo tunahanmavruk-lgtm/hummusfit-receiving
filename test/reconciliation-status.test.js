@@ -8,6 +8,18 @@ const caseItem = {
 };
 const posted = { sku: "CASE-8", status: "posted", units: 16 };
 
+test('receipt-only supply shortages remain visible without pretending to need POS corrections',()=>{
+ const r=reconciliationStatus({store:'Bellmore',items:[{sku:'',title:'Cups',receivingCategory:'other_essentials',diff:-1,orderDiff:-1}]});
+ assert.equal(r.status,'receipt_exception'); assert.equal(r.pendingCount,0); assert.equal(r.receiptExceptionCount,1);
+ assert.equal(r.correctionLines[0].status,'receipt_only'); assert.equal(r.correctedCount,0);
+});
+test('verified scanned extra retains catalog identity but remains pending until Shopify proof',()=>{
+ const r=reconciliationStatus({store:'Lynbrook',items:[],extraItems:[{code:'123',qty:15,title:'Clean Bulk',sku:'123',catalogVerified:true,catalogStatus:'matched'}]});
+ assert.equal(r.correctionLines[0].title,'Clean Bulk');assert.equal(r.correctionLines[0].sku,'123');assert.equal(r.pendingCount,1);
+ const unknown=reconciliationStatus({store:'Lynbrook',items:[],extraItems:[{code:'typed',qty:1,sku:'invented',title:'invented'}]});
+ assert.equal(unknown.correctionLines[0].sku,'');assert.equal(unknown.correctionLines[0].title,'typed');
+});
+
 test("only the 14 approved Hummus Fit POS locations have an automatic conversion expectation", () => {
   assert.equal(POS_STORES.size, 14);
   assert.equal(POS_STORES.has("Holbrook"), true);

@@ -21,6 +21,7 @@ test('exact Shopify proof closes the discrepancy without writing inventory',()=>
   assert.equal(reconciliationStatus(report).status,'corrected');
 });
 const invalid={
+  'superseded report':f=>f.report.supersededBy='newer',
   'ambiguous store tags':f=>f.order.customer.tags.push('Hummus Fit Holbrook'),
   'wrong location':f=>f.group.changes[0].location.id='gid://shopify/Location/1',
   'wrong delta':f=>f.group.changes[0].delta=-2,
@@ -40,6 +41,9 @@ const invalid={
   'pre-cutover report':f=>f.report.submittedAt='2026-10-05T13:00:00Z',
   'extra adjustment line':f=>f.group.changes.push({...f.group.changes[0]}),
 };
+function zeroFixture(){const f=fixture();Object.assign(f.report.items[0],{receivingCategory:'retail_essentials',actuallyReceived:0,expectedFromPicking:0,orderDiff:-15,diff:0});f.report.posInventoryResults=[{sku:'FOOD',status:'zero_received',units:0}];f.group.referenceDocumentUri=`gid://agent-hazar-receiving/ZeroCaseShortage/${correctionKey(f.report,'FOOD','zero_case')}`;f.group.changes[0].delta=-15;return f;}
+test('zero missing cases accept only exact case removal proof, not a sell-unit deduction',()=>{const f=zeroFixture();const c=verifiedCorrection(f.report,'FOOD',f.group,f.order,'zero_case');assert.equal(c.delta,-15);mergeVerifiedCorrection(f.report,c);assert.equal(reconciliationStatus(f.report).status,'corrected');});
+for(const [name,change] of Object.entries({converted:f=>f.report.posInventoryResults.push({sku:'FOOD',status:'posted',units:12}),received:f=>f.report.items[0].actuallyReceived=1,picked:f=>f.report.items[0].expectedFromPicking=1,unitDelta:f=>f.group.changes[0].delta=-180,noZeroProof:f=>f.report.posInventoryResults=[]}))test(`zero case rejects ${name}`,()=>{const f=zeroFixture();change(f);assert.throws(()=>verifiedCorrection(f.report,'FOOD',f.group,f.order,'zero_case'));});
 for(const [name,change] of Object.entries(invalid)) test(`rejects ${name}`,()=>{const f=fixture();change(f);assert.throws(()=>verifiedCorrection(f.report,'FOOD',f.group,f.order));});
 test('one Shopify correction can be evidenced on matching duplicate reports, never different received counts',()=>{
   const f=fixture();const c=verifiedCorrection(f.report,'FOOD',f.group,f.order);

@@ -16,7 +16,7 @@ function discrepancyEntries(report) {
       ? [{ key: `item:${index}`, title: item.title || item.sku || "Item", sku: item.sku || "", diff: Number(item.diff), orderDiff: item.orderDiff, kind: "ordered_item", category: item.receivingCategory }]
       : []),
     ...extras.flatMap((item, index) => Number(item.qty) > 0
-      ? [{ key: `extra:${index}`, title: item.code || "Unidentified item", sku: "", diff: Number(item.qty), kind: "extra_item" }]
+      ? [{ key: `extra:${index}`, title: item.catalogVerified === true && item.catalogStatus === 'matched' ? (item.title || item.code) : (item.code || "Unidentified item"), sku: item.catalogVerified === true && item.catalogStatus === 'matched' ? (item.sku || "") : "", diff: Number(item.qty), kind: "extra_item" }]
       : []),
   ];
 }
@@ -32,7 +32,8 @@ function confirmedCorrection(report, discrepancy, correction) {
       !String(correction.sku || "").trim() || !Number.isSafeInteger(correction.delta) || correction.delta === 0) return false;
   // An off-order barcode must first be mapped to a verified Shopify SKU.
   if (discrepancy.kind === "extra_item" &&
-      (correction.catalogVerified !== true || correction.delta !== discrepancy.diff)) return false;
+      (correction.catalogVerified !== true || correction.delta !== discrepancy.diff ||
+       (discrepancy.sku && correction.sku !== discrepancy.sku))) return false;
   if (discrepancy.kind === "ordered_item" &&
       (discrepancy.category === "other_essentials" || correction.sku !== discrepancy.sku ||
        !Number.isSafeInteger(Number(discrepancy.orderDiff)) ||
@@ -43,20 +44,26 @@ function confirmedCorrection(report, discrepancy, correction) {
 }
 
 function reconciliationStatus(report) {
+  if(report.supersededBy && report.supersession?.confirmedAt) return {
+    status:'superseded',label:'Superseded by confirmed latest receipt',
+    detail:`Use report ${report.supersededBy}. Original counts are retained for audit; no inventory was changed by superseding this report.`,
+    discrepancyLines:0,correctedCount:0,pendingCount:0,correctionLines:[],postedUnits:0,
+  };
   const items = Array.isArray(report.items) ? report.items : [];
   const results = Array.isArray(report.posInventoryResults) ? report.posInventoryResults : [];
   const discrepancies = discrepancyEntries(report);
   const corrections = Array.isArray(report.inventoryCorrections) ? report.inventoryCorrections : [];
   const correctionLines = discrepancies.map((entry) => {
     const correction = corrections.find((candidate) => confirmedCorrection(report, entry, candidate));
-    return { ...entry, status: correction ? "corrected" : "pending",
+    return { ...entry, status: entry.category === 'other_essentials' ? 'receipt_only' : correction ? "corrected" : "pending",
       adjustmentId: correction?.adjustmentId || null,
       postedAt: correction?.postedAt || null,
       locationId: correction?.locationId || null,
       delta: correction?.delta || null };
   });
   const correctedCount = correctionLines.filter((entry) => entry.status === "corrected").length;
-  const pendingCount = correctionLines.length - correctedCount;
+  const pendingCount = correctionLines.filter((entry) => entry.status === 'pending').length;
+  const receiptExceptionCount = correctionLines.filter((entry) => entry.status === 'receipt_only').length;
   const retail = items.filter((item) => item.receivingCategory === "retail_essentials");
   const postedResults = results.filter((result) => ["posted", "already_posted"].includes(result.status));
   const postedUnits = postedResults.reduce((sum, result) => sum + (Number(result.units) || 0), 0);
@@ -69,15 +76,16 @@ function reconciliationStatus(report) {
   });
 
   if (discrepancies.length > 0) {
-    const status = pendingCount === 0 && !conversionPending ? "corrected" :
+    const status = pendingCount === 0 && !conversionPending ? (receiptExceptionCount ? 'receipt_exception' : "corrected") :
       correctedCount > 0 ? "partially_corrected" : "needs_review";
     return { status,
-      label: status === "corrected" ? `Solved by ${AGENT_LABEL}` :
+      label: status === 'receipt_exception' ? 'Supply exception — logistics follow-up' : status === "corrected" ? `Solved by ${AGENT_LABEL}` :
         status === "partially_corrected" ? `Partially corrected by ${AGENT_LABEL}` : "Inventory correction not confirmed",
-      detail: (pendingCount === 0 ? "Every discrepancy has a confirmed Shopify inventory adjustment at this store." :
+      detail: (pendingCount === 0 ? (correctedCount ? "Every inventory discrepancy has a confirmed Shopify adjustment at this store." : "No POS inventory adjustment is required for these receipt-only supplies.") :
         `${pendingCount} discrepant line${pendingCount === 1 ? "" : "s"} still need${pendingCount === 1 ? "s" : ""} a confirmed Shopify adjustment. Logistics review is required; automatic discrepancy corrections are not enabled.`) +
-        (conversionPending ? " Retail Essentials POS case conversion is also not confirmed." : ""),
-      discrepancyLines: discrepancies.length, correctedCount, pendingCount, correctionLines, postedUnits,
+        (conversionPending ? " Retail Essentials POS case conversion is also not confirmed." : "") +
+        (receiptExceptionCount ? ` ${receiptExceptionCount} Other Essentials supply exception(s) remain recorded for logistics follow-up; no POS stock change applies.` : ''),
+      discrepancyLines: discrepancies.length, correctedCount, pendingCount, receiptExceptionCount, correctionLines, postedUnits,
       correctedAt: status === "corrected" ? correctionLines.reduce((latest, entry) =>
         !latest || entry.postedAt > latest ? entry.postedAt : latest, null) : null,
     };

@@ -18,6 +18,11 @@ test('unrelated food shortages do not block exact retail receipts', () => {
   assert.equal(retryRetailLines(report()).length, 2);
 });
 
+test('zero-picked, zero-received missing cases do not block verified received cases',()=>{
+  const r=report();r.items[1].actuallyReceived=0;r.items[1].expectedFromPicking=0;
+  assert.equal(retryRetailLines(r).length,2);
+});
+
 test('retail differences, extras, pre-cutover reports and B2B remain blocked', () => {
   for (const change of [
     r => { r.items[1].actuallyReceived = 0; },

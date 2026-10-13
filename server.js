@@ -446,6 +446,8 @@ app.post("/api/retry-retail-conversion", requireReportsManager, async (req, res)
       body: JSON.stringify({
         store: report.store, orderId: report.orderId,
         receivedCounts: Object.fromEntries(retail.map((item) => [item.sku, item.actuallyReceived])),
+        receiptEvidence: {id:report.id,store:report.store,orderId:report.orderId,orderName:report.orderName,
+          submittedAt:report.submittedAt,items:retail.map(({sku,orderedQty,expectedFromPicking,actuallyReceived})=>({sku,orderedQty,expectedFromPicking,actuallyReceived}))},
       }),
       signal: AbortSignal.timeout(60000),
     });
@@ -472,7 +474,7 @@ app.post("/api/retry-retail-conversion", requireReportsManager, async (req, res)
 
 // History for one specific store, most recent first — for the
 // per-location trend view.
-app.post("/api/import-verified-food-correction", requireReportsManager, async (req, res) => {
+async function importVerifiedReceiptCorrection(req,res,kind='food') {
   const { reportId, sku, adjustmentId } = req.body || {};
   const report = loadReports().find(r => r.id === reportId);
   if (!report || typeof sku !== "string" || !/^gid:\/\/shopify\/InventoryAdjustmentGroup\/\d+$/.test(adjustmentId || "")) {
@@ -483,13 +485,24 @@ app.post("/api/import-verified-food-correction", requireReportsManager, async (r
     const reports = loadReports();
     const current = reports.find(r => r.id === reportId);
     if (!current || current.orderId !== report.orderId || current.store !== report.store) throw new Error("Report changed during verification");
-    const correction = verifiedCorrection(current, sku, proof.node, proof.order);
+    const correction = verifiedCorrection(current, sku, proof.node, proof.order,kind);
     mergeVerifiedCorrection(current, correction);
     saveReports(reports);
     res.json({ ok: true, correction, reconciliation: reconciliationStatus(current) });
   } catch (error) {
     res.status(409).json({ error: error.message });
   }
+}
+app.post('/api/import-verified-food-correction',requireReportsManager,(req,res)=>importVerifiedReceiptCorrection(req,res,'food'));
+app.post('/api/import-verified-case-shortage',requireReportsManager,(req,res)=>importVerifiedReceiptCorrection(req,res,'zero_case'));
+
+app.post('/api/confirm-latest-receipt',requireReportsManager,(req,res)=>{
+  try {
+    const reports=loadReports();
+    const superseded=require('./receipt-supersession').supersedeEarlierReports(reports,req.body?.reportId,req.body?.physicalCounts,req.hfLogisticsIdentity?.sub||'authorized-manager');
+    saveReports(reports);
+    res.json({ok:true,superseded});
+  } catch(error) { res.status(409).json({error:error.message}); }
 });
 
 app.get("/api/reports/:store", requireReportsManager, (req, res) => {
