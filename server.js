@@ -498,6 +498,21 @@ async function importVerifiedReceiptCorrection(req,res,kind='food') {
 app.post('/api/import-verified-food-correction',requireReportsManager,(req,res)=>importVerifiedReceiptCorrection(req,res,'food'));
 app.post('/api/import-verified-case-shortage',requireReportsManager,(req,res)=>importVerifiedReceiptCorrection(req,res,'zero_case'));
 app.post('/api/import-verified-extra-correction',requireReportsManager,(req,res)=>importVerifiedReceiptCorrection(req,res,'extra'));
+app.post('/api/confirm-extra-count',requireReportsManager,async(req,res)=>{
+  try {
+    const {reportId,sku,quantity,adjustmentId}=req.body||{};
+    const initial=loadReports().find(r=>r.id===reportId);
+    const extra=(initial?.extraItems||[]).find(e=>e.sku===sku);
+    const previous=(initial?.inventoryCorrections||[]).find(c=>c.sku===sku&&c.catalogVerified);
+    if(!extra||!previous||!/^gid:\/\/shopify\/InventoryAdjustmentGroup\/\d+$/.test(adjustmentId||''))throw new Error('Exact posted extra correction required');
+    const originalProof=await readCorrectionProof(previous.adjustmentId,initial.orderId,extra.variantId);
+    const deltaProof=await readCorrectionProof(adjustmentId,initial.orderId,extra.variantId);
+    const reports=loadReports(),current=reports.find(r=>r.id===reportId);
+    if(!current)throw new Error('Report no longer exists');
+    const confirmation=require('./extra-count-confirmation').confirmExtraCount(current,sku,quantity,originalProof,deltaProof,req.hfLogisticsIdentity?.sub||'authorized-manager');
+    saveReports(reports);res.json({ok:true,confirmation,reconciliation:reconciliationStatus(current)});
+  }catch(error){res.status(409).json({error:error.message});}
+});
 
 app.post('/api/confirm-latest-receipt',requireReportsManager,(req,res)=>{
   try {
