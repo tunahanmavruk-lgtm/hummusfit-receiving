@@ -59,6 +59,7 @@ test('HTTP retry persists a partial ledger result and rejects unauthenticated wr
   });
   const url=`http://127.0.0.1:${port}/api/retry-retail-conversion`;
   assert.equal((await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,401);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/retry-automatic-reconciliation`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,401);
   const payload=Buffer.from(JSON.stringify({sub:'test',role:'manager',scope:['reports.manage'],exp:Math.floor(Date.now()/1000)+60})).toString('base64url');
   const token=payload+'.'+crypto.createHmac('sha256','test-only-secret').update(payload).digest('base64url');
   for(let i=0;i<2;i++) {

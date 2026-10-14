@@ -1,6 +1,7 @@
 const { POS_STORES } = require('./reconciliation-status');
 const { verifiedCorrection,mergeVerifiedCorrection } = require('./verified-correction');
 const { retryRetailLines,mergeRetailPostings,confirmedPosting } = require('./retail-conversion-retry');
+const { receiptOrders,receiptForOrder } = require('./receipt-orders');
 const RELEASE='receiving-auto-2026-10-13-v1';
 const CUTOVER=Date.parse('2026-10-13T20:21:19Z');
 
@@ -9,6 +10,19 @@ function queueReport(report) {
     report.automation={version:RELEASE,status:'queued',attempts:0,nextAttemptAt:Date.now(),results:[]};
   }
   return report;
+}
+function retryReport(report,identity,now=Date.now()) {
+  if(!report||report.supersededBy||!POS_STORES.has(report.store)||
+    report.automation?.version!==RELEASE||!(Date.parse(report.submittedAt)>=CUTOVER))
+    throw new Error('Only an authoritative report already enrolled after the automatic cutover can be retried');
+  receiptOrders(report);
+  if(report.automation.status==='processing') throw new Error('This report is already processing');
+  if(report.automation.status==='complete') return false;
+  // Preserve all posted proofs and attempt history. The canonical order/item ledger
+  // remains the only authority for inventory writes; retrying never resets it.
+  Object.assign(report.automation,{status:'queued',nextAttemptAt:now,error:null,
+    retryRequestedAt:new Date(now).toISOString(),retryRequestedBy:identity});
+  return true;
 }
 function createReconciliationWorker({loadReports,saveReports,request,readProof,now=Date.now}) {
   let running=false,timer;
@@ -21,7 +35,11 @@ function createReconciliationWorker({loadReports,saveReports,request,readProof,n
   async function process(report) {
     let retry=false;
     const results=[];
-    const other=loadReports().some(r=>r.id!==report.id&&r.store===report.store&&r.orderId===report.orderId&&!r.supersededBy);
+    let orderIds;
+    try { orderIds=receiptOrders(report).map(o=>o.id); }
+    catch(e) { update(report.id,r=>{r.automation.status='requires_review';r.automation.error=e.message;});return; }
+    const other=loadReports().some(r=>r.id!==report.id&&r.store===report.store&&!r.supersededBy&&
+      String(r.orderId||'').split(',').some(id=>orderIds.includes(id.trim())));
     if(other) {
       update(report.id,r=>{r.automation.status='requires_review';r.automation.error='Multiple receiving reports for this order require confirmation of the authoritative counts';});
       return;
@@ -34,9 +52,12 @@ function createReconciliationWorker({loadReports,saveReports,request,readProof,n
         for(const result of response.results||[]) {
           if(result.status==='posted') {
             try {
-              const proof=await readProof(result.adjustmentId,report.orderId,result.variantId);
+              const scoped=receiptForOrder(report,result.orderId||report.orderId);
+              const proof=await readProof(result.adjustmentId,scoped.orderId,result.variantId);
               update(report.id,current=>{
-                const correction=verifiedCorrection(current,result.sku,proof.node,proof.order,result.kind,proof.variant);
+                const correction=verifiedCorrection(receiptForOrder(current,scoped.orderId),result.sku,proof.node,proof.order,result.kind,proof.variant);
+                correction.sourceOrderId=scoped.orderId;
+                correction.orderId=current.orderId;
                 mergeVerifiedCorrection(current,correction);
               });
               results.push({...result,shopifyVerified:true});
@@ -95,4 +116,4 @@ function createReconciliationWorker({loadReports,saveReports,request,readProof,n
     start(){timer=setInterval(()=>tick().catch(e=>console.error('[receiving-worker]',e.message)),15000);timer.unref();this.kick();},
     stop(){clearInterval(timer);}};
 }
-module.exports={RELEASE,CUTOVER,queueReport,createReconciliationWorker};
+module.exports={RELEASE,CUTOVER,queueReport,retryReport,createReconciliationWorker};

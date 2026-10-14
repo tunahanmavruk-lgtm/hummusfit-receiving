@@ -8,7 +8,7 @@ const { reconciliationStatus, POS_STORES } = require("./reconciliation-status");
 const { cleanExtraLines, verifyExtraLines } = require("./receiving-extra-evidence");
 const { retryRetailLines, mergeRetailPostings } = require("./retail-conversion-retry");
 const { verifiedCorrection, mergeVerifiedCorrection, readCorrectionProof } = require("./verified-correction");
-const { RELEASE: AUTOMATION_RELEASE, queueReport, createReconciliationWorker } = require('./automatic-reconciliation');
+const { RELEASE: AUTOMATION_RELEASE, queueReport, retryReport, createReconciliationWorker } = require('./automatic-reconciliation');
 
 const app = express();
 app.use(express.json());
@@ -435,6 +435,15 @@ app.get("/api/reports", requireReportsManager, (req, res) => {
   res.json({ reports: reports.slice().reverse().map((report) => ({
     ...report, inventoryReconciliation: reconciliationStatus(report),
   })) });
+});
+
+app.post('/api/retry-automatic-reconciliation',requireReportsManager,(req,res)=>{
+  const reports=loadReports(),report=reports.find(r=>r.id===String(req.body?.reportId||''));
+  try {
+    const queued=retryReport(report,req.hfLogisticsIdentity.sub);
+    if(queued) { saveReports(reports);receivingWorker.kick(); }
+    return res.status(queued?202:200).json({ok:true,reportId:report.id,status:report.automation.status});
+  } catch(e) { return res.status(409).json({error:e.message}); }
 });
 
 // Retry previously saved, verified Retail Essentials lines after
