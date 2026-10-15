@@ -13,6 +13,7 @@
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="/receiving-policy.js"></script>
 <script src="/receiving-barcode.js"></script>
+<script src="/receiving-progress.js?v=20261014-1"></script>
 <style>
   :root{
     --bg:#FFFFFF;
@@ -300,6 +301,11 @@
     display:flex; align-items:center; justify-content:center; padding:0;
   }
   .extra-remove:active{ transform:scale(0.9); }
+  .receipt-editor{border:0;padding:0;margin:0;min-width:0;}
+  .progress-notice{padding:14px;border-radius:12px;margin:12px 0;background:#e7f3ee;color:#174b42;line-height:1.5;}
+  .progress-notice.warning{background:#fff0dd;color:#713a12;}
+  .receipt-editor:disabled{opacity:.7;}
+  .retry-submit,.confirm-submit{width:100%;padding:16px;margin:8px 0;border-radius:12px;border:0;background:#df5b24;color:white;font-weight:700;font-size:16px;cursor:pointer;}
 </style>
 <link rel="stylesheet" href="/hf-logistics-theme.css?v=1">
 </head>
@@ -383,6 +389,92 @@
   var currentlyVisibleCode = null;
   var missedFrameCount = 0;
   var receivedByValue = '';
+  var progress = window.HFReceivingProgress;
+  if(!progress){
+    document.getElementById('mainContent').textContent = 'Receiving could not load safely. Please reload this page; do not start scanning yet.';
+    return;
+  }
+  var progressEnabled = progress.enabled(storeName);
+  var draftStore = null, draftProblem = '', lastDraftState = '', draftRestored = false;
+  var pendingSubmission = null, finishedReport = null, submissionError = '', receiptConflict = false;
+  var confirmFinish = false, draftMismatch = false, otherDrafts = [];
+  var pendingLookupCount = 0;
+  if(progressEnabled){
+    try { draftStore = progress.create(window.localStorage, storeName); }
+    catch(e){ draftProblem = 'Browser storage is unavailable. Keep this page open and enable browser storage before finishing.'; }
+  }
+
+  function draftSnapshot(){
+    return { expected:expected, scannedCounts:scannedCounts, resolvedKeys:resolvedKeys,
+      extraScans:extraScans, extraDetails:extraDetails, receivedBy:receivedByValue,
+      pending:pendingSubmission, completedReportId:finishedReport && finishedReport.id };
+  }
+  function saveProgress(){
+    if(!progressEnabled || !expected) return true;
+    if(draftMismatch) return false;
+    if(!draftStore) return false;
+    var snapshot=draftSnapshot(), state=JSON.stringify(snapshot);
+    if(state===lastDraftState && !draftProblem) return true;
+    try {
+      draftStore.save(snapshot); lastDraftState=state; draftProblem=''; return true;
+    } catch(e){ draftProblem=e.message || 'Progress could not be saved. Keep this page open and contact logistics.'; return false; }
+  }
+  function restoreDraft(draft){
+    scannedCounts=draft.scannedCounts || {}; resolvedKeys=draft.resolvedKeys || {};
+    extraScans=draft.extraScans || {}; extraDetails=draft.extraDetails || {};
+    receivedByValue=draft.receivedBy || ''; pendingSubmission=draft.pending || null;
+    draftRestored=true;
+  }
+  function initializeProgress(){
+    if(!progressEnabled || !draftStore) return;
+    try {
+      var draft=draftStore.read(expected.orderId);
+      if(draft){
+        restoreDraft(draft);
+        if(progress.signature(draft.expected)!==progress.signature(expected)){
+          // Never silently apply old confirmations to changed picking data.
+          expected=draft.expected;
+          if(!pendingSubmission){
+            draftMismatch=true;
+            submissionError='The delivery details changed after this draft was saved. Your original counts are preserved. Contact logistics before submitting.';
+          }
+        }
+      }
+      otherDrafts=draftStore.list().filter(function(d){return progress.canonical(d.expected.orderId)!==progress.canonical(expected.orderId);});
+    } catch(e){ draftProblem=e.message; draftMismatch=true; }
+  }
+  function lookupBarcode(code){
+    pendingLookupCount++;
+    return fetch('/api/lookup-received-barcode', {
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({access:storeAccessToken,store:storeName,code:code}),
+      signal:AbortSignal.timeout(15000)
+    }).then(function(r){return r.ok?r.json():{status:'unavailable'};})
+      .finally(function(){pendingLookupCount--;});
+  }
+  function progressHtml(){
+    if(!progressEnabled) return '';
+    var warning=draftProblem || submissionError;
+    var html='<div class="progress-notice'+(warning?' warning':'')+'" role="status" aria-live="polite">'
+      + escapeHtml(warning || (pendingSubmission ? 'Your confirmed counts are saved. Retry sends the same receipt, not another inventory correction.' :
+        (draftRestored?'Saved progress restored. ':'')+'Progress is saved automatically on this device. A draft is not a submitted report.'))+'</div>';
+    if(draftProblem) html+='<button class="retry-submit" id="saveDraftBtn" type="button">Try saving progress again</button>';
+    if(pendingSubmission && !receiptConflict && !draftMismatch) html+='<button class="retry-submit" id="retrySubmitBtn" type="button" '+(submissionInFlight?'disabled':'')+'>'+(submissionInFlight?'Sending saved receipt…':'Retry / confirm saved receipt')+'</button>';
+    if(!pendingSubmission && !draftMismatch && otherDrafts.length){
+      html+='<div class="progress-notice warning">An unfinished draft for '+escapeHtml(otherDrafts[0].expected.orderName || 'another delivery')+' is also saved on this device. <button id="resumeDraftBtn" type="button">Resume that draft</button></div>';
+    }
+    return html;
+  }
+  function bindProgressButtons(){
+    var retry=document.getElementById('retrySubmitBtn'); if(retry) retry.onclick=sendPendingReceipt;
+    var save=document.getElementById('saveDraftBtn'); if(save) save.onclick=function(){lastDraftState='';saveProgress();render();};
+    var resume=document.getElementById('resumeDraftBtn'); if(resume) resume.onclick=function(){
+      var draft=draftStore.read(otherDrafts[0].expected.orderId); if(!draft) return;
+      expected=draft.expected;restoreDraft(draft);otherDrafts=[];lastDraftState='';
+      document.getElementById('dateOrderRow').textContent='Resuming saved delivery '+(expected.orderName || '');
+      render();
+    };
+  }
 
   // General-purpose tap feedback for every clickable element on this
   // page — same pattern as Route Board's tapFeedback(): one shared
@@ -451,10 +543,25 @@
           return;
         }
         expected = result.data;
+        initializeProgress();
         dateRow.innerHTML += '<span class="info-chip order">Order' + (expected.orderName && expected.orderName.indexOf(',') !== -1 ? 's' : '') + ': ' + escapeHtml(expected.orderName || '—') + '</span>';
         dateRow.innerHTML += '<span class="info-chip crate">📦 ' + expected.crateCount + ' crate' + (expected.crateCount === 1 ? '' : 's') + ' expected</span>';
         render(); // Receiving can start immediately; ETA arrives independently.
+        if(progressEnabled){
+          var checkedOrder=expected.orderId;
+          fetch('/api/receiving-receipt/'+encodeURIComponent(storeName)+'?access='+encodeURIComponent(storeAccessToken)+'&orderId='+encodeURIComponent(checkedOrder))
+            .then(function(r){return r.json().then(function(data){return {ok:r.ok,data:data};});})
+            .then(function(result){
+              if(progress.canonical(expected.orderId)!==progress.canonical(checkedOrder)) return;
+              if(result.ok && result.data.report && !pendingSubmission){
+                // Keep any local draft as evidence; an existing receipt is not
+                // permission to overwrite it or start inventory again.
+                renderFinishedReport(result.data.report);watchReportStatus(result.data.report);
+              } else if(!result.ok){receiptConflict=true;submissionError=result.data.error;render();}
+            }).catch(function(){ /* Submission itself remains idempotent. */ });
+        }
         etaPromise.then(function(eta){
+          if(finishedReport) return;
           etaInfo = eta;
           render();
           if(!etaRefreshTimer){
@@ -470,7 +577,15 @@
         });
       })
       .catch(function(err){
-        document.getElementById('mainContent').innerHTML = '<div class="error-state">Could not reach the server: ' + escapeHtml(err.message) + '</div>';
+        var drafts=[];
+        try { if(draftStore) drafts=draftStore.list(); } catch(e){}
+        if(drafts.length){
+          expected=drafts[0].expected;draftStore.read(expected.orderId);restoreDraft(drafts[0]);
+          submissionError='Connection unavailable. Showing your saved draft for '+(expected.orderName || '')+'. Keep it on this device and retry when connected.';
+          render();
+        } else {
+          document.getElementById('mainContent').innerHTML = '<div class="error-state">Could not reach the server: ' + escapeHtml(err.message) + '. Reload to try again.</div>';
+        }
       });
   }
 
@@ -606,10 +721,7 @@
       render();
       return;
     }
-    fetch('/api/lookup-received-barcode', {
-      method:'POST', headers:{ 'Content-Type':'application/json' },
-      body:JSON.stringify({ access:storeAccessToken, store:storeName, code:desc })
-    }).then(function(response){ return response.ok ? response.json() : { status:'unavailable' }; })
+    lookupBarcode(desc)
     .then(function(result){
       if(!extraScans[desc]) return;
       extraDetails[desc] = { source:'entered', lookupStatus:result.status,
@@ -624,8 +736,11 @@
   }
 
   function render(){
+    if(finishedReport) return; // ETA polling must never reopen a submitted form.
+    saveProgress();
     var main = document.getElementById('mainContent');
-    var html = etaCardHtml();
+    var html = progressHtml()+etaCardHtml();
+    html += '<fieldset class="receipt-editor" '+(progressEnabled && (pendingSubmission || draftMismatch || receiptConflict)?'disabled':'')+'>';
     html += '<div class="picked-by-note">' + pickerAvatar(expected.pickedBy) + '<span>Picked by ' + escapeHtml(expected.pickedBy || 'Unknown') + '</span></div>';
     html += '<div class="received-by-field">'
       + '<label for="receivedByInput">Received By</label>'
@@ -697,7 +812,14 @@
     } else {
       html += '<button class="finish-btn" id="finishBtn">✓ Finish Receiving Check</button>';
     }
+    html += '</fieldset>';
+    if(progressEnabled && confirmFinish && !pendingSubmission){
+      html+='<div class="progress-notice warning">Confirm these are the actual counts received, including zeros and wrong/extra items. This submits the report and starts verification.</div><button class="confirm-submit" id="confirmSubmitBtn" type="button">Confirm and submit receiving report</button><button id="cancelSubmitBtn" type="button">Keep checking</button>';
+    }
     main.innerHTML = html;
+    bindProgressButtons();
+    var confirmButton=document.getElementById('confirmSubmitBtn'); if(confirmButton) confirmButton.onclick=prepareSubmission;
+    var cancelButton=document.getElementById('cancelSubmitBtn'); if(cancelButton) cancelButton.onclick=function(){confirmFinish=false;render();};
     document.getElementById('scanBtn').addEventListener('click', function(){ tapFeedback(); openScanner(); });
     document.getElementById('reportExtraBtn').addEventListener('click', function(){ tapFeedback(); openScanner('extra'); });
     document.querySelectorAll('[data-manual-key]').forEach(function(btn){
@@ -740,6 +862,8 @@
     document.getElementById('finishBtn').addEventListener('click', function(){ tapFeedback(); finishCheck(); });
     document.getElementById('receivedByInput').addEventListener('input', function(e){
       receivedByValue = e.target.value;
+      saveProgress();
+      if(draftProblem){var status=document.querySelector('[role="status"]');if(status)status.textContent=draftProblem;}
     });
     document.querySelectorAll('[data-tap-link]').forEach(function(link){
       link.addEventListener('click', function(){ tapFeedback(); });
@@ -756,6 +880,7 @@
   }
 
   function openScanner(mode){
+    if(progressEnabled && (pendingSubmission || finishedReport || receiptConflict || draftMismatch)) return;
     scanMode = mode === 'extra' ? 'extra' : 'expected';
     extraScanPending = false;
     lastScanTime = 0; lastScanCode = null; currentlyVisibleCode = null; missedFrameCount = 0;
@@ -859,6 +984,7 @@
   }
 
   function countExpectedItem(matchedItem){
+    if(progressEnabled && (pendingSubmission || finishedReport)) return;
     var key = itemKey(matchedItem);
     scannedCounts[key] = (scannedCounts[key] || 0) + 1;
     resolvedKeys[key] = true;
@@ -896,10 +1022,7 @@
       extraDetails[scanned] = { source:source === 'entered' ? 'entered' : 'scan', lookupStatus:'pending' };
       playScanFeedback();
       render();
-      fetch('/api/lookup-received-barcode', {
-        method:'POST', headers:{ 'Content-Type':'application/json' },
-        body:JSON.stringify({ access:storeAccessToken, store:storeName, code:scanned })
-      }).then(function(response){ return response.ok ? response.json() : { status:'unavailable' }; })
+      lookupBarcode(scanned)
       .then(function(result){
         if(!extraScans[scanned]) return;
         extraDetails[scanned] = { source:source === 'entered' ? 'entered' : 'scan', lookupStatus:result.status,
@@ -929,10 +1052,7 @@
     var matchedItem = window.HFReceivingBarcode.expectedItem(expected.items, scanned);
     if(matchedItem){ countExpectedItem(matchedItem); return; }
     document.getElementById('scanProgressLabel').textContent = 'Checking barcode against the product catalog…';
-    fetch('/api/lookup-received-barcode', {
-      method:'POST', headers:{ 'Content-Type':'application/json' },
-      body:JSON.stringify({ access:storeAccessToken, store:storeName, code:scanned })
-    }).then(function(r){ return r.ok ? r.json() : { status:'unavailable' }; })
+    lookupBarcode(scanned)
     .then(function(result){
       var knownOrderItem = result.status === 'matched' ? expected.items.filter(function(item){ return item.sku === result.sku; }) : [];
       if(knownOrderItem.length === 1){ countExpectedItem(knownOrderItem[0]); return; }
@@ -957,16 +1077,20 @@
   var reportStatusTimer = null;
 
   function reportIsRetrying(report){
-    return (report.nextFoodRetryAt && Number(report.foodRetryAttempts || 0) < 12) ||
+    return (report.automation && ['queued','processing','retry'].indexOf(report.automation.status)!==-1) ||
+      (report.nextFoodRetryAt && Number(report.foodRetryAttempts || 0) < 12) ||
       (report.nextRetailRetryAt && Number(report.retailRetryAttempts || 0) < 12);
   }
 
   function renderFinishedReport(report){
+    finishedReport=report;
+    if(etaRefreshTimer){clearInterval(etaRefreshTimer);etaRefreshTimer=null;}
     var main = document.getElementById('mainContent');
     var status = report.inventoryReconciliation || {};
     var retrying = reportIsRetrying(report);
     var good = ['corrected', 'conversion_posted', 'receipt_verified'].includes(status.status);
-    var html = '<div class="result-banner ' + (report.hasErrors ? 'bad' : 'good') + '">'
+    var html = '<div class="progress-notice">✓ Receiving report saved. Reference: '+escapeHtml(report.id)+'. Do not submit this delivery again.</div>';
+    html += '<div class="result-banner ' + (report.hasErrors ? 'bad' : 'good') + '">'
       + (report.hasErrors ? '⚠ ' + report.errorPercent + '% receiving discrepancy recorded' : '✓ All items matched')
       + '</div>';
     html += '<div class="result-banner ' + (good ? 'good' : retrying ? 'pending' : 'bad') + '">'
@@ -1002,6 +1126,8 @@
 
   function finishCheck(){
     if(submissionInFlight) return;
+    if(progressEnabled && (pendingSubmission || finishedReport || receiptConflict || draftMismatch)) return;
+    if(pendingLookupCount){submissionError='Please wait for the barcode lookup to finish before submitting.';render();return;}
     // Belt-and-suspenders: the button itself is disabled while items are
     // unresolved, but this is the actual gate that decides whether a
     // submission is allowed through, so it has to hold even if the
@@ -1016,6 +1142,13 @@
     if(!receivedBy){
       alert('Enter your name in "Received By" before finishing.');
       document.getElementById('receivedByInput').focus();
+      return;
+    }
+    if(progressEnabled){
+      submissionError='';
+      if(!saveProgress()){render();return;}
+      confirmFinish=true;render();
+      var confirmation=document.getElementById('confirmSubmitBtn');if(confirmation)confirmation.scrollIntoView({block:'center',behavior:'smooth'});
       return;
     }
     if(!confirm('Finish the receiving check for ' + storeName + '? This locks in what was scanned.')) return;
@@ -1053,6 +1186,54 @@
         alert('Could not submit: ' + err.message);
       });
   }
+
+  function prepareSubmission(){
+    if(pendingSubmission || submissionInFlight || finishedReport || receiptConflict || draftMismatch) return;
+    if(pendingLookupCount){submissionError='Wait for barcode lookups to finish.';render();return;}
+    if(!receivedByValue.trim() || expected.items.some(function(i){return i.status!=='missing'&&!resolvedKeys[itemKey(i)];})){
+      confirmFinish=false;submissionError='Enter your name and confirm every item, including zeros.';render();return;
+    }
+    var bytes=new Uint8Array(16);window.crypto.getRandomValues(bytes);
+    var id=Array.from(bytes).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+    pendingSubmission=JSON.parse(JSON.stringify({submissionId:id,store:storeName,
+      orderId:expected.orderId,orderName:expected.orderName,pickedBy:expected.pickedBy,
+      receivedBy:receivedByValue.trim(),expectedItems:expected.items,scannedCounts:scannedCounts,
+      extraScans:extraScans,extraDetails:extraDetails}));
+    confirmFinish=false;
+    if(!saveProgress()){render();return;}
+    sendPendingReceipt();
+  }
+
+  function sendPendingReceipt(){
+    if(!pendingSubmission || submissionInFlight || finishedReport || receiptConflict || draftMismatch) return;
+    if(!saveProgress()){render();return;}
+    submissionInFlight=true;submissionError='';render();
+    var body=Object.assign({},pendingSubmission,{access:storeAccessToken});
+    fetch('/api/submit-receiving-check',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),
+      signal:AbortSignal.timeout(20000)
+    }).then(function(r){
+      return r.json().then(function(data){return {status:r.status,ok:r.ok,data:data};});
+    }).then(function(result){
+      submissionInFlight=false;
+      if(result.ok && result.data.ok && result.data.report){
+        finishedReport=result.data.report;pendingSubmission=null;saveProgress();
+        renderFinishedReport(result.data.report);watchReportStatus(result.data.report);return;
+      }
+      submissionError=result.data.error || 'The server could not confirm submission. Your counts are saved; retry safely.';
+      if(result.status===409 && result.data.code==='receipt_conflict') receiptConflict=true;
+      // Only an explicit pre-save validation rejection may unlock editing.
+      // Timeouts, bad JSON and all unknown outcomes must resend identical counts.
+      if(result.status===400 && result.data.notSaved===true){pendingSubmission=null;saveProgress();}
+      render();
+    }).catch(function(){
+      submissionInFlight=false;
+      submissionError='Connection interrupted or confirmation unavailable. Your counts are saved. Use Retry / confirm saved receipt; it cannot create a second receipt.';
+      render();
+    });
+  }
+
+  window.addEventListener('pagehide',function(){saveProgress();});
 
   loadExpected();
 })();

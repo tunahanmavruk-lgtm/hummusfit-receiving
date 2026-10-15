@@ -7,6 +7,7 @@ async function run(total,status='matched') {
     storeAccessToken:'local-test-only',storeName:'Holbrook',itemKey:i=>i.sku,closeScanner(){},playScanFeedback(){},render(){},alert(){},
     document:{getElementById:()=>({style:{display:'flex'}})},prompt:()=>prompts.shift(),
     fetch:async()=>({ok:true,json:async()=>({status,sku:'BOWL',title:'Zeus Bowl'})}),
+    lookupBarcode:async()=>({status,sku:'BOWL',title:'Zeus Bowl'}),
     window:{HFReceivingBarcode:require('../public/receiving-barcode')}};
   vm.createContext(c);vm.runInContext(handler,c);c.handleScanResult('123456789012','entered');
   await new Promise(resolve=>setImmediate(resolve));return c;

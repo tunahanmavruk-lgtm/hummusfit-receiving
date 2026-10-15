@@ -9,6 +9,8 @@ const { cleanExtraLines, verifyExtraLines } = require("./receiving-extra-evidenc
 const { retryRetailLines, mergeRetailPostings } = require("./retail-conversion-retry");
 const { verifiedCorrection, mergeVerifiedCorrection, readCorrectionProof } = require("./verified-correction");
 const { RELEASE: AUTOMATION_RELEASE, queueReport, retryReport, createReconciliationWorker } = require('./automatic-reconciliation');
+const { orderIds, canonicalOrder, submissionIdentity, findSubmission, createSubmissionLock } = require('./receipt-submission');
+const withSubmissionLock = createSubmissionLock();
 
 const app = express();
 app.use(express.json());
@@ -296,10 +298,49 @@ app.post("/api/lookup-received-barcode", requireStoreAccess, async (req, res) =>
   }
 });
 
+// Read-only recovery after a reload or a lost response. Never queues inventory.
+app.get('/api/receiving-receipt/:store', requireStoreAccess, (req, res) => {
+  if (!POS_STORES.has(req.params.store)) return res.status(404).json({error:'Not available'});
+  res.set('Cache-Control', 'private, no-store');
+  try {
+    const ids = orderIds(req.query.orderId);
+    const reports = loadReports().filter(r => r.store === req.params.store && !r.supersededBy &&
+      String(r.orderId || '').split(',').some(id => ids.includes(id.trim())));
+    if (!reports.length) return res.json({ok:true,report:null});
+    if (reports.length !== 1 || canonicalOrder(reports[0].orderId) !== ids.join(',')) {
+      return res.status(409).json({error:'An overlapping receipt already exists. Logistics must confirm the authoritative counts; do not submit again.'});
+    }
+    return res.json({ok:true,report:{...reports[0],inventoryReconciliation:reconciliationStatus(reports[0])}});
+  } catch (e) { return res.status(400).json({error:e.message}); }
+});
+
 app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => {
+  try {
+    if (POS_STORES.has(req.body.store)) return await withSubmissionLock(req.body.store, () => submitReceipt(req, res));
+    return await submitReceipt(req, res);
+  } catch (e) {
+    console.error('[receiving-submit]', e.message);
+    // The client retains the immutable submission and safely checks/retries it.
+    if (!res.headersSent) res.status(500).json({error:'Receipt confirmation could not be returned. Keep your saved draft and retry safely.'});
+  }
+});
+
+async function submitReceipt(req, res) {
   const { store, orderId, orderName, pickedBy, receivedBy, expectedItems, scannedCounts, extraScans, extraDetails } = req.body;
   if (!store || !expectedItems || !scannedCounts) {
     return res.status(400).json({ error: "store, expectedItems, and scannedCounts are required" });
+  }
+  let identity;
+  if (POS_STORES.has(store)) {
+    try { identity = submissionIdentity(req.body); }
+    catch (e) { return res.status(400).json({error:e.message,notSaved:true}); }
+    const previous = findSubmission(loadReports(), store, identity);
+    if (previous) {
+      if (previous.conflict) return res.status(409).json({code:'receipt_conflict',
+        error:'A receipt already exists with different or overlapping counts. Your draft is preserved. Contact logistics; no additional inventory correction was started.',
+        reportId:previous.report?.id});
+      return res.json({ok:true,replayed:true,report:{...previous.report,inventoryReconciliation:reconciliationStatus(previous.report)}});
+    }
   }
 
   let totalExpected = 0;
@@ -353,7 +394,7 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
       return response.json();
     });
   } catch (error) {
-    return res.status(400).json({ error: error.message });
+    return res.status(400).json({ error: error.message, notSaved:true });
   }
   const extraQtyTotal = extraItems.reduce((sum, e) => sum + e.qty, 0);
   totalDiscrepant += extraQtyTotal;
@@ -378,6 +419,10 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
     // A discrepancy is never marked solved merely because a scan was saved.
     inventoryCorrections: [],
   };
+  if (identity) {
+    report.submissionId = identity.submissionId;
+    report.submissionFingerprint = identity.fingerprint;
+  }
 
   const reports = loadReports();
   queueReport(report);
@@ -427,7 +472,7 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
     if(currentIndex>=0) { currentReports[currentIndex]=report; saveReports(currentReports); }
   }
   res.json({ ok: true, report: { ...report, inventoryReconciliation: reconciliationStatus(report) } });
-});
+}
 
 // For the picking-crew dashboard — every report, most recent first.
 app.get("/api/reports", requireReportsManager, (req, res) => {
@@ -638,7 +683,8 @@ const receivingWorker=createReconciliationWorker({
     return result;
   },
 });
-app.get('/api/receiving-automation-health',(_req,res)=>res.json({version:AUTOMATION_RELEASE,stores:14,durableQueue:true}));
+app.get('/api/receiving-automation-health',(_req,res)=>res.json({version:AUTOMATION_RELEASE,stores:14,durableQueue:true,
+  receivingProgress:'draft-retry-2026-10-14-v1',idempotentSubmission:true}));
 receivingWorker.start();
 
 app.listen(PORT, "0.0.0.0", () => {

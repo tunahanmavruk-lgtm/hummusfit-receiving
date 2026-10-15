@@ -6,11 +6,12 @@ test('staff confirmation saves immediately, then verifies and posts in backgroun
   t.after(()=>fs.rmSync(tmp,{recursive:true,force:true}));
   for(const f of fs.readdirSync(root).filter(f=>f.endsWith('.js')))fs.copyFileSync(path.join(root,f),path.join(tmp,f));
   fs.symlinkSync(path.join(root,'node_modules'),path.join(tmp,'node_modules'),'dir');
-  let receipt,release;
+  let receipt,release,correctionRequests=0;
   const gate=new Promise(resolve=>{release=resolve;});
   const mock=http.createServer(async(req,res)=>{
     let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);res.setHeader('Content-Type','application/json');
     if(req.url==='/api/automatic-receiving-correction') {
+      correctionRequests++;
       receipt=body.report;await gate;res.end(JSON.stringify({results:[{status:'posted',kind:'food',sku:'WRAP',adjustmentId:'gid://shopify/InventoryAdjustmentGroup/10'}]}));
     } else if(req.url==='/api/receiving-adjustment-proof') {
       const key=crypto.createHash('sha256').update(JSON.stringify(['agent-hazar-food','Holbrook',receipt.orderId,'WRAP'])).digest('hex');
@@ -27,12 +28,19 @@ test('staff confirmation saves immediately, then verifies and posts in backgroun
   const payload=Buffer.from(JSON.stringify({v:1,scope:'receiving.store',store:'Holbrook'})).toString('base64url');
   const access=payload+'.'+crypto.createHmac('sha256','store-test-only').update(payload).digest('base64url');
   const url=`http://127.0.0.1:${port}/api/submit-receiving-check`;
-  const body={store:'Holbrook',access,orderId:'gid://shopify/Order/1',orderName:'#1',expectedItems:[{title:'Crispy Chicken Wrap',sku:'WRAP',expectedQty:7,pickedQty:7}],scannedCounts:{WRAP:0}};
+  const body={store:'Holbrook',access,submissionId:'a'.repeat(32),orderId:'gid://shopify/Order/1',orderName:'#1',expectedItems:[{title:'Crispy Chicken Wrap',sku:'WRAP',expectedQty:7,pickedQty:7}],scannedCounts:{WRAP:0}};
   const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)});
   assert.equal(response.status,200);const saved=await response.json();assert.equal(saved.report.automation.status,'queued');
   assert.equal(JSON.parse(fs.readFileSync(path.join(tmp,'reports.json'))).length,1);
   release();let posted;
   for(let i=0;i<100;i++){posted=JSON.parse(fs.readFileSync(path.join(tmp,'reports.json')))[0];if(posted.automation.status==='complete')break;await new Promise(r=>setTimeout(r,20));}
   assert.equal(posted.automation.status,'complete');assert.equal(posted.inventoryCorrections[0].delta,-7);assert.equal(posted.inventoryCorrections[0].shopifyVerified,true);
+  const retries=await Promise.all(Array.from({length:12},()=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json())));
+  assert.ok(retries.every(r=>r.replayed&&r.report.id===saved.report.id));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(tmp,'reports.json'))).length,1);
+  assert.equal(correctionRequests,1);
+  assert.equal(retries[0].report.inventoryCorrections[0].adjustmentId,posted.inventoryCorrections[0].adjustmentId);
+  const conflicting=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,submissionId:'b'.repeat(32),scannedCounts:{WRAP:1}})});
+  assert.equal(conflicting.status,409);assert.equal(correctionRequests,1);
   body.access='invalid';assert.equal((await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).status,403);
 });
