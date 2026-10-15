@@ -65,6 +65,7 @@ async function run(engine,name){
     assert.equal(f.posts[1].scannedCounts.WRAP,0);assert.equal(f.posts[1].extraScans['123456789012'],2);
     await page.clock.fastForward(16000);assert.equal(await page.locator('#finishBtn').count(),0);
     await page.reload();await page.getByText('Receiving report saved.',{exact:false}).waitFor();
+    assert.equal(await page.evaluate(()=>window.HFReceivingProgress.create(localStorage,'Holbrook').list().length),0);
     assert.equal(f.posts.length,2);assert.deepEqual(f.errors,[]);await f.context.close();
     const quota=await fixture(browser,{failStorage:true});await counts(quota.page);await quota.page.locator('#finishBtn').click();
     assert.equal(quota.posts.length,0);assert.match(await quota.page.locator('main').textContent(),/Storage is full/);await quota.context.close();

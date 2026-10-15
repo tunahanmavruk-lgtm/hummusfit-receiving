@@ -396,7 +396,7 @@
   }
   var progressEnabled = progress.enabled(storeName);
   var draftStore = null, draftProblem = '', lastDraftState = '', draftRestored = false;
-  var pendingSubmission = null, finishedReport = null, submissionError = '', receiptConflict = false;
+  var pendingSubmission = null, finishedReport = null, completedReportId = null, submissionError = '', receiptConflict = false;
   var confirmFinish = false, draftMismatch = false, otherDrafts = [];
   var pendingLookupCount = 0;
   if(progressEnabled){
@@ -407,7 +407,7 @@
   function draftSnapshot(){
     return { expected:expected, scannedCounts:scannedCounts, resolvedKeys:resolvedKeys,
       extraScans:extraScans, extraDetails:extraDetails, receivedBy:receivedByValue,
-      pending:pendingSubmission, completedReportId:finishedReport && finishedReport.id };
+      pending:pendingSubmission, completedReportId:finishedReport ? finishedReport.id : completedReportId };
   }
   function saveProgress(){
     if(!progressEnabled || !expected) return true;
@@ -423,6 +423,7 @@
     scannedCounts=draft.scannedCounts || {}; resolvedKeys=draft.resolvedKeys || {};
     extraScans=draft.extraScans || {}; extraDetails=draft.extraDetails || {};
     receivedByValue=draft.receivedBy || ''; pendingSubmission=draft.pending || null;
+    completedReportId=draft.completedReportId || null;
     draftRestored=true;
   }
   function initializeProgress(){
