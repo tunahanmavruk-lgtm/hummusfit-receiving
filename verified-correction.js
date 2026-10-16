@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { AGENT_LABEL } = require('./reconciliation-status');
+const {fullyDelivered,partialReceiptAllowed}=require('./huntington-fulfillment');
 const LOCATIONS = Object.freeze({
   Bellmore:'103133315319', 'Deer Park':'66819653879', Islip:'103133413623',
   Farmingdale:'103133479159', Holbrook:'66819490039', Huntington:'103133511927',
@@ -29,7 +30,7 @@ function verifiedCorrection(report, sku, group, order, kind='food', variant=null
   const submitted = Date.parse(report?.submittedAt);
   if (!locationId || !Number.isFinite(submitted) || submitted < Date.parse('2026-10-06T04:00:00Z') ||
       !order || order.id !== report.orderId || order.name !== report.orderName ||
-      order.displayFulfillmentStatus !== 'FULFILLED' || order.lineItems?.pageInfo?.hasNextPage ||
+      (order.displayFulfillmentStatus !== 'FULFILLED' && !partialReceiptAllowed(report,order)) || order.lineItems?.pageInfo?.hasNextPage ||
       !order.fulfillments?.some(f=>f.status==='SUCCESS' && f.location?.id==='gid://shopify/Location/103133642999')) {
     throw new Error('Exact post-cutover fulfilled store order is required');
   }
@@ -38,6 +39,7 @@ function verifiedCorrection(report, sku, group, order, kind='food', variant=null
   const destinations=Object.keys(LOCATIONS).filter(store=>tags.includes(`hummus fit ${store.toLowerCase()}`) || (store==='Islip' && tags.includes('hummus fit east islip')));
   if (destinations.length!==1 || destinations[0]!==report.store || !storeTags.some(t=>tags.includes(t))) throw new Error('Order destination does not match report store');
   if(kind==='extra') return verifiedExtra(report,sku,group,order,variant,locationId,submitted);
+  if(order.displayFulfillmentStatus==='PARTIALLY_FULFILLED' && !fullyDelivered(order,sku)) throw new Error('Correction requires this exact delivered line');
   const items = report.items.map((item,index)=>({...item,index})).filter(i=>i.sku===sku);
   const lines = order.lineItems.nodes.filter(i=>i.sku===sku);
   if (items.length!==1 || lines.length!==1) throw new Error('SKU is missing or ambiguous');

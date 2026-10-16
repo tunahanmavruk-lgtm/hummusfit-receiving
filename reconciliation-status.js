@@ -111,9 +111,11 @@ function reconciliationStatus(report) {
   const discrepancies = discrepancyEntries(report);
   const corrections = Array.isArray(report.inventoryCorrections) ? report.inventoryCorrections : [];
   const correctionLines = discrepancies.map((entry) => {
+    const item=entry.key.startsWith('item:')?items[Number(entry.key.split(':')[1])]:null;
+    const backordered=item&&(report.posInventoryResults||[]).some(r=>require('./retail-conversion-retry').confirmedBackorder(report,item,r));
     const correction = corrections.find((candidate) => confirmedCorrection(report, entry, candidate));
     const manual = existingManualCorrection(report, entry.key);
-    return { ...entry, status: entry.category === 'other_essentials' ? 'receipt_only' : correction || manual ? "corrected" : "pending",
+    return { ...entry, status: backordered?'backordered':entry.category === 'other_essentials' ? 'receipt_only' : correction || manual ? "corrected" : "pending",
       adjustmentId: correction?.adjustmentId || null,
       postedAt: correction?.postedAt || manual?.evidence?.postedAtMinute || null,
       locationId: correction?.locationId || manual?.locationId || null,
@@ -123,6 +125,7 @@ function reconciliationStatus(report) {
   const correctedCount = correctionLines.filter((entry) => entry.status === "corrected").length;
   const pendingCount = correctionLines.filter((entry) => entry.status === 'pending').length;
   const receiptExceptionCount = correctionLines.filter((entry) => entry.status === 'receipt_only').length;
+  const backorderCount=correctionLines.filter(entry=>entry.status==='backordered').length;
   const retail = items.filter((item) => item.receivingCategory === "retail_essentials");
   const postedResults = results.filter((result) => ["posted", "already_posted"].includes(result.status));
   const postedUnits = postedResults.reduce((sum, result) => sum + (Number(result.units) || 0), 0);
@@ -135,18 +138,18 @@ function reconciliationStatus(report) {
   });
 
   if (discrepancies.length > 0) {
-    const status = pendingCount === 0 && !conversionPending ? (receiptExceptionCount ? 'receipt_exception' : "corrected") :
+    const status = pendingCount === 0 && !conversionPending ? (backorderCount?'received_with_backorder':receiptExceptionCount ? 'receipt_exception' : "corrected") :
       correctedCount > 0 ? "partially_corrected" : "needs_review";
     return { status,
-      label: status === 'receipt_exception' ? 'Supply exception — logistics follow-up' : status === "corrected" ? `Solved by ${AGENT_LABEL}` :
+      label: status==='received_with_backorder'?'Received items complete — backorder remains':status === 'receipt_exception' ? 'Supply exception — logistics follow-up' : status === "corrected" ? `Solved by ${AGENT_LABEL}` :
         status === "partially_corrected" ? `Partially corrected by ${AGENT_LABEL}` : "Inventory correction not confirmed",
-      detail: (pendingCount === 0 ? (correctedCount ? "Every inventory discrepancy has a confirmed Shopify adjustment at this store." + (correctionLines.some(c=>c.resolution==='verified_existing_manual') ? " Existing manual correction verified by Agent Hazar; no inventory was posted again." : '') : "No POS inventory adjustment is required for these receipt-only supplies.") :
+      detail: (backorderCount?`${backorderCount} unshipped line(s) remain on backorder; no inventory credit or shortage reversal was made for them. `:'')+(pendingCount === 0 ? (correctedCount ? "Every delivered-item inventory discrepancy has a confirmed Shopify adjustment at this store." + (correctionLines.some(c=>c.resolution==='verified_existing_manual') ? " Existing manual correction verified by Agent Hazar; no inventory was posted again." : '') : "No further POS inventory correction is required for this receipt.") :
         `${pendingCount} discrepant line${pendingCount === 1 ? "" : "s"} still need${pendingCount === 1 ? "s" : ""} a confirmed Shopify adjustment. ` +
         (['queued','processing','retry'].includes(report.automation?.status) ? 'Agent Hazar is processing or safely retrying this saved receipt.' :
           (report.automation?.error || report.automation?.results?.filter(r=>r.status!=='posted').map(r=>r.error).filter(Boolean).join('; ') || 'Logistics review is required; no unverified inventory change is marked solved.'))) +
         (conversionPending ? " Retail Essentials POS case conversion is also not confirmed." : "") +
         (receiptExceptionCount ? ` ${receiptExceptionCount} Other Essentials supply exception(s) remain recorded for logistics follow-up; no POS stock change applies.` : ''),
-      discrepancyLines: discrepancies.length, correctedCount, pendingCount, receiptExceptionCount, correctionLines, postedUnits,
+      discrepancyLines: discrepancies.length, correctedCount, pendingCount, receiptExceptionCount, backorderCount, correctionLines, postedUnits,
       correctedAt: status === "corrected" ? correctionLines.reduce((latest, entry) =>
         !latest || entry.postedAt > latest ? entry.postedAt : latest, null) : null,
     };

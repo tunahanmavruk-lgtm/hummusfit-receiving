@@ -1,6 +1,6 @@
 const { POS_STORES } = require('./reconciliation-status');
 const { verifiedCorrection,mergeVerifiedCorrection } = require('./verified-correction');
-const { retryRetailLines,mergeRetailPostings,confirmedPosting } = require('./retail-conversion-retry');
+const { retryRetailLines,mergeRetailPostings,confirmedPosting,confirmedBackorder } = require('./retail-conversion-retry');
 const { receiptOrders,receiptForOrder } = require('./receipt-orders');
 const RELEASE='receiving-auto-2026-10-13-v1';
 const CUTOVER=Date.parse('2026-10-13T20:21:19Z');
@@ -73,7 +73,7 @@ function createReconciliationWorker({loadReports,saveReports,request,readProof,n
         // Off-order food is reconciled independently; it cannot block a complete retail receipt.
         retryRetailLines({...report,extraItems:[]});
         const latest=loadReports().find(r=>r.id===report.id);
-        const complete=retail.every(i=>(latest?.posInventoryResults||[]).some(e=>confirmedPosting(i,e)));
+        const complete=retail.every(i=>(latest?.posInventoryResults||[]).some(e=>confirmedPosting(i,e)||confirmedBackorder(report,i,e)));
         if(!complete) {
           const response=await request('/api/essentials-pos-receipt',{
             store:report.store,orderId:report.orderId,
@@ -84,7 +84,7 @@ function createReconciliationWorker({loadReports,saveReports,request,readProof,n
           let done=false;
           update(report.id,r=>{done=mergeRetailPostings(r,retail,response);});
           if(!done) {
-            const pending=(response.results||[]).filter(r=>!['posted','already_posted','zero_received'].includes(r.status));
+            const pending=(response.results||[]).filter(r=>!['posted','already_posted','zero_received','backordered'].includes(r.status));
             const transient=pending.length===0||pending.some(r=>['processing','retry'].includes(r.status));
             retry=retry||transient;
             results.push({kind:'retail',status:transient?'retry':'requires_review',error:response.error||pending.map(r=>r.error).filter(Boolean).join('; ')||'Retail conversion proof is incomplete'});

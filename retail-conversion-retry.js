@@ -19,6 +19,12 @@ function retryRetailLines(report) {
   return retail;
 }
 
+function confirmedBackorder(report,item,entry) {
+  return report.store==='Huntington'&&entry?.sku===item.sku&&entry.status==='backordered'&&entry.shopifyVerified===true&&
+    entry.orderId===report.orderId&&/^gid:\/\/shopify\/LineItem\/\d+$/.test(entry.lineItemId||'')&&
+    entry.units===0&&entry.orderedCases===item.orderedQty&&item.actuallyReceived===0&&item.expectedFromPicking===0&&
+    Number.isFinite(Date.parse(entry.verifiedAt));
+}
 function confirmedPosting(item, entry) {
   return entry?.sku === item.sku && ((item.actuallyReceived === 0 && entry.status === 'zero_received' && entry.units === 0) ||
     (item.actuallyReceived > 0 && ['posted', 'already_posted'].includes(entry.status) &&
@@ -35,12 +41,15 @@ function mergeRetailPostings(report, retail, result) {
     const current = candidates.length === 1 ? candidates[0] : null;
     // A transient failure must never erase an already recorded Shopify proof.
     if (oldProof) return oldProof;
+    if (confirmedBackorder(report,item,current)) return current;
+    const oldBackorder=prior.find(entry=>confirmedBackorder(report,item,entry));
+    if(oldBackorder) return oldBackorder;
     if (confirmedPosting(item, current)) return current;
     if (current && !['posted', 'already_posted', 'zero_received'].includes(current.status)) return current;
     return { sku: item.sku, status: 'requires_review', error: result.error || 'Shopify posting proof was not confirmed' };
   });
   report.posInventoryResults = postings;
-  report.posInventoryWritesEnabled = retail.every(item => postings.some(entry => confirmedPosting(item, entry)));
+  report.posInventoryWritesEnabled = retail.every(item => postings.some(entry => confirmedPosting(item, entry)||confirmedBackorder(report,item,entry)));
   report.posInventoryRetriedAt = new Date().toISOString();
   for (const item of report.items) {
     if (item.receivingCategory !== 'retail_essentials') continue;
@@ -54,4 +63,4 @@ function mergeRetailPostings(report, retail, result) {
   return report.posInventoryWritesEnabled;
 }
 
-module.exports = { retryRetailLines, confirmedPosting, mergeRetailPostings };
+module.exports = { retryRetailLines, confirmedPosting, confirmedBackorder, mergeRetailPostings };
