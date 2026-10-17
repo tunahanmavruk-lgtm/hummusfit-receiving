@@ -41,7 +41,13 @@ function partialReceiptAllowed(report, order) {
     const lines = order.lineItems.nodes.filter(l => l.sku && l.sku === item.sku);
     if (lines.length !== 1 || lines[0].quantity !== item.orderedQty) return item.receivingCategory === 'other_essentials';
     const qty = totals.get(lines[0].id) || 0;
-    return qty === lines[0].quantity || (qty === 0 && item.actuallyReceived === 0 && item.expectedFromPicking === 0);
+    // A split retail line must not block an independently fulfilled food line.
+    // This grants no retail conversion permission: split-case conversions keep
+    // their existing review gate and cannot reuse the original order/SKU key.
+    const confirmedSplitRetail=item.receivingCategory==='retail_essentials'&&
+      qty>0&&qty<lines[0].quantity&&item.expectedFromPicking===qty&&item.actuallyReceived===qty;
+    return qty === lines[0].quantity || confirmedSplitRetail ||
+      (qty === 0 && item.actuallyReceived === 0 && item.expectedFromPicking === 0);
   });
 }
 module.exports = { WAREHOUSE, LOCATION, CUTOVER, deliveredQuantities, fullyDelivered, partialReceiptAllowed };

@@ -1,6 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {verifiedCorrection,correctionKey,mergeVerifiedCorrection}=require('../verified-correction');
 const {mergeRetailPostings}=require('../retail-conversion-retry');
+const {retryRetailLines}=require('../retail-conversion-retry');
 const {reconciliationStatus}=require('../reconciliation-status');
 function fixture(){
   const report={id:'Huntington::receipt',store:'Huntington',orderId:'gid://shopify/Order/1',orderName:'#1',submittedAt:'2026-10-16T17:04:16Z',items:[
@@ -49,4 +50,11 @@ test('all 14 stores retain unchanged food deltas and exact store-bound backorder
     mergeRetailPostings(f.report,[f.report.items[1]],{results:[]});
     assert.equal(f.report.inventoryCorrections.length,1,store);
   }
+});
+test('split retail cases do not block proven food; split conversion remains review-only',()=>{
+  const f=fixture();f.order.lineItems.nodes[1].quantity=3;
+  f.order.fulfillments[0].fulfillmentLineItems.nodes.push({quantity:2,lineItem:{id:'gid://shopify/LineItem/2'}});
+  Object.assign(f.report.items[1],{orderedQty:3,expectedFromPicking:2,actuallyReceived:2,orderDiff:-1});
+  const proof=verifiedCorrection(f.report,'food',f.group,f.order);assert.equal(proof.delta,2);
+  assert.throws(()=>retryRetailLines(f.report),/exactly match/);
 });
