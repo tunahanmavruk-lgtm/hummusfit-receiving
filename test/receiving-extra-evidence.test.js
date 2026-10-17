@@ -13,15 +13,10 @@ test("a scanned extra keeps its physical count and only a server catalog match s
     variantId: "gid://shopify/ProductVariant/123", sku: "ZEUS-BOWL", title: "Zeus Bowl" }]);
 });
 
-test("a typed name cannot become an automatic catalog match", async () => {
-  const lines = cleanExtraLines({ "Grilled chicken pesto": 6 }, {
-    "Grilled chicken pesto": { source: "manual", sku: "ZEUS-BOWL" },
-  });
-  let called = false;
-  const result = await verifyExtraLines(lines, async () => { called = true; });
-  assert.equal(called, false);
-  assert.equal(result[0].catalogVerified, false);
-  assert.equal(result[0].catalogStatus, "needs_review");
+test("typed descriptions and legacy manual entries are rejected before saving", () => {
+  assert.throws(() => cleanExtraLines({ "Grilled chicken pesto": 6 }), /identifying code/);
+  assert.throws(() => cleanExtraLines({ "ZEUS-BOWL": 6 }, { "ZEUS-BOWL": { source: "manual" } }), /Free-text/);
+  assert.throws(() => cleanExtraLines({ " ZEUS-BOWL ": 6 }), /identifying code/);
 });
 
 test("an ambiguous or unavailable lookup never authorizes inventory", async () => {

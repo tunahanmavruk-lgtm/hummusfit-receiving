@@ -30,9 +30,10 @@ function submissionIdentity(body) {
   }
   const keys = new Set();
   const items = body.expectedItems.map(i => {
+    if (!i || typeof i !== 'object') throw new Error('Select products from the delivery; typed descriptions cannot be submitted.');
     const key = i.sku || i.title;
-    const qty = body.scannedCounts[key] ?? 0;
-    if (!key || keys.has(key) || !Number.isSafeInteger(qty) || qty < 0 || qty > 100000 ||
+    const qty = Object.hasOwn(body.scannedCounts, key) ? body.scannedCounts[key] : 0;
+    if (typeof key !== 'string' || !key.trim() || keys.has(key) || !Number.isSafeInteger(qty) || qty < 0 || qty > 100000 ||
         !Number.isSafeInteger(i.pickedQty) || i.pickedQty < 0 ||
         !Number.isSafeInteger(Number(i.expectedQty)) || Number(i.expectedQty) < 0) {
       throw new Error('Each delivery item needs a unique SKU and a whole-number received count (zero is allowed).');
@@ -42,7 +43,9 @@ function submissionIdentity(body) {
   });
   if (Object.keys(body.scannedCounts).some(k => !keys.has(k))) throw new Error('Some saved counts do not belong to this delivery. Contact logistics; do not discard your draft.');
   const fingerprint = receiptFingerprint({ store: body.store, orderId: body.orderId, items,
-    extraItems: cleanExtraLines(body.extraScans, body.extraDetails) });
+    // Old saved receipts can still acknowledge identical retries. Every NEW
+    // receipt passes strict cleanExtraLines and catalog verification in server.js.
+    extraItems: cleanExtraLines(body.extraScans, body.extraDetails, {legacyFingerprint:true}) });
   return { ids, fingerprint, submissionId: body.submissionId || null };
 }
 

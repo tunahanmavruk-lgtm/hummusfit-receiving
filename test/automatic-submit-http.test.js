@@ -9,8 +9,10 @@ test('staff confirmation saves immediately, then verifies and posts in backgroun
   let receipt,release,correctionRequests=0;
   const gate=new Promise(resolve=>{release=resolve;});
   const mock=http.createServer(async(req,res)=>{
-    let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);res.setHeader('Content-Type','application/json');
-    if(req.url==='/api/automatic-receiving-correction') {
+    let raw='';for await(const chunk of req)raw+=chunk;const body=raw?JSON.parse(raw):{};res.setHeader('Content-Type','application/json');
+    if(req.url==='/api/picked-summary/Holbrook') {
+      res.end(JSON.stringify({orderId:'gid://shopify/Order/1',orderName:'#1',pickedBy:'Test',items:[{title:'Crispy Chicken Wrap',sku:'WRAP',expectedQty:7,pickedQty:7}]}));
+    } else if(req.url==='/api/automatic-receiving-correction') {
       correctionRequests++;
       receipt=body.report;await gate;res.end(JSON.stringify({results:[{status:'posted',kind:'food',sku:'WRAP',adjustmentId:'gid://shopify/InventoryAdjustmentGroup/10'}]}));
     } else if(req.url==='/api/receiving-adjustment-proof') {

@@ -27,6 +27,6 @@ test('barcode identity is read-only and unknown extras remain review-only', () =
   const ui = fs.readFileSync(path.join(__dirname, '../public/receiving.html'), 'utf8');
   assert.match(receiving, /app\.post\("\/api\/lookup-received-barcode", requireStoreAccess/);
   assert.match(receiving, /if \(!POS_STORES\.has\(store\)/);
-  assert.match(ui, /inventory review pending/);
+  assert.match(ui, /Verify wrong \/ extra items before finishing/);
   assert.match(ui, /extraDetails: extraDetails/);
 });

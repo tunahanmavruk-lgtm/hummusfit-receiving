@@ -12,6 +12,14 @@ test('different devices and legacy clients cannot create a second receipt for sa
   b.orderId+=',gid://shopify/Order/2';assert.equal(findSubmission([r],b.store,submissionIdentity(b)).conflict,true);
   assert.equal(findSubmission([r],'Lynbrook',submissionIdentity({...b,store:'Lynbrook'})),null);
 });
+test('historical free-text receipt can acknowledge an identical retry without creating inventory work',()=>{
+  const b=body();b.extraScans={'Old product description':2};b.extraDetails={'Old product description':{source:'manual'}};
+  const identity=submissionIdentity(b),r=saved();r.submissionFingerprint=identity.fingerprint;
+  r.extraItems=[{code:'Old product description',qty:2}];
+  assert.equal(findSubmission([r],b.store,identity).replayed,true);
+  b.extraScans['Old product description']=3;
+  assert.equal(findSubmission([r],b.store,submissionIdentity(b)).conflict,true);
+});
 test('invalid input rejects fractional, negative, missing or duplicate order identities',()=>{
   for(const change of [b=>b.orderId='',b=>b.orderId+=','+b.orderId,b=>b.scannedCounts.FOOD=-1,b=>b.scannedCounts.FOOD=1.5,b=>b.expectedItems.push(b.expectedItems[0])]){
     const b=body();change(b);assert.throws(()=>submissionIdentity(b));

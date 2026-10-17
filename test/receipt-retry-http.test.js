@@ -8,9 +8,16 @@ test('all 14 stores: restart/lost response/parallel requests reuse one receipt, 
   for(const f of fs.readdirSync(root).filter(f=>f.endsWith('.js')))fs.copyFileSync(path.join(root,f),path.join(tmp,f));
   fs.symlinkSync(path.join(root,'node_modules'),path.join(tmp,'node_modules'),'dir');
   const socket=http.createServer();await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address().port;await new Promise(r=>socket.close(r));
+  let reads=0;
+  const mock=http.createServer((req,res)=>{
+    const store=decodeURIComponent(req.url.split('/').pop()),idx=[...POS_STORES].indexOf(store);
+    reads++;res.setHeader('Content-Type','application/json');
+    res.end(JSON.stringify({orderId:'gid://shopify/Order/'+(idx+1),orderName:'#'+(idx+1),pickedBy:'Test',items:[{sku:'WRAP',title:'Food',expectedQty:2,pickedQty:2}]}));
+  });
+  await new Promise(r=>mock.listen(0,'127.0.0.1',r));t.after(()=>mock.close());
   let proc;
   async function start(){
-    proc=spawn(process.execPath,['server.js'],{cwd:tmp,env:{PATH:process.env.PATH,PORT:String(port),STORE_TRACKING_SECRET:'test-only',RECEIVING_AUTOMATION_ENABLED:'false',ROUTE_BOARD_URL:'http://127.0.0.1:1'},stdio:['ignore','pipe','pipe']});
+    proc=spawn(process.execPath,['server.js'],{cwd:tmp,env:{PATH:process.env.PATH,PORT:String(port),STORE_TRACKING_SECRET:'test-only',RECEIVING_AUTOMATION_ENABLED:'false',ROUTE_BOARD_URL:`http://127.0.0.1:${mock.address().port}`},stdio:['ignore','pipe','pipe']});
     await new Promise((resolve,reject)=>{proc.stdout.once('data',resolve);proc.once('error',reject);});
   }
   async function stop(){if(proc&&!proc.killed){const done=new Promise(r=>proc.once('exit',r));proc.kill();await done;}}
@@ -31,6 +38,7 @@ test('all 14 stores: restart/lost response/parallel requests reuse one receipt, 
   assert.equal((await post({...b,scannedCounts:{WRAP:1}})).status,409);
   assert.equal((await post({...b,submissionId:crypto.randomUUID(),orderId:b.orderId+',gid://shopify/Order/99'})).status,409);
   assert.equal((await post({...b,access:token(bodies[1].store)})).status,403);
+  assert.equal(reads,14,'replays and conflicts do not revalidate or requeue the order');
   const stored=JSON.parse(fs.readFileSync(path.join(tmp,'reports.json')));
   assert.equal(stored.length,14);assert.ok(stored.every(r=>r.items[0].actuallyReceived===0));
 });

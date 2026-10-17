@@ -11,6 +11,7 @@ const { verifiedCorrection, mergeVerifiedCorrection, readCorrectionProof } = req
 const { RELEASE: AUTOMATION_RELEASE, queueReport, retryReport, createReconciliationWorker } = require('./automatic-reconciliation');
 const { orderIds, canonicalOrder, submissionIdentity, findSubmission, createSubmissionLock } = require('./receipt-submission');
 const withSubmissionLock = createSubmissionLock();
+const { verifiedDelivery, requireVerifiedExtras } = require('./structured-receipt');
 
 const app = express();
 app.use(express.json());
@@ -326,7 +327,7 @@ app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => 
 });
 
 async function submitReceipt(req, res) {
-  const { store, orderId, orderName, pickedBy, receivedBy, expectedItems, scannedCounts, extraScans, extraDetails } = req.body;
+  let { store, orderId, orderName, pickedBy, receivedBy, expectedItems, scannedCounts, extraScans, extraDetails } = req.body;
   if (!store || !expectedItems || !scannedCounts) {
     return res.status(400).json({ error: "store, expectedItems, and scannedCounts are required" });
   }
@@ -341,6 +342,21 @@ async function submitReceipt(req, res) {
         reportId:previous.report?.id});
       return res.json({ok:true,replayed:true,report:{...previous.report,inventoryReconciliation:reconciliationStatus(previous.report)}});
     }
+    let delivery;
+    try {
+      const upstream = await fetch(`${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`, {signal:AbortSignal.timeout(10000)});
+      if (!upstream.ok) throw new Error('Delivery verification unavailable');
+      delivery = await upstream.json();
+    } catch {
+      return res.status(400).json({notSaved:true,error:'Delivery verification is temporarily unavailable. Your draft is preserved; try again when logistics is available.'});
+    }
+    try {
+      delivery = verifiedDelivery(req.body, delivery);
+      expectedItems = delivery.items;
+      orderId = delivery.orderId;
+      orderName = delivery.orderName;
+      pickedBy = delivery.pickedBy;
+    } catch(e) { return res.status(400).json({notSaved:true,error:e.message}); }
   }
 
   let totalExpected = 0;
@@ -393,6 +409,7 @@ async function submitReceipt(req, res) {
       if (!response.ok) throw new Error("Catalog lookup failed");
       return response.json();
     });
+    if (POS_STORES.has(store)) requireVerifiedExtras(extraItems, expectedItems);
   } catch (error) {
     return res.status(400).json({ error: error.message, notSaved:true });
   }
@@ -697,7 +714,8 @@ const receivingWorker=createReconciliationWorker({
   },
 });
 app.get('/api/receiving-automation-health',(_req,res)=>res.json({version:AUTOMATION_RELEASE,stores:14,durableQueue:true,
-  receivingProgress:'draft-retry-2026-10-14-v1',idempotentSubmission:true}));
+  receivingProgress:'draft-retry-2026-10-14-v1',idempotentSubmission:true,
+  structuredReceipts:'verified-delivery-2026-10-17-v1',deliveryItemSearch:true}));
 receivingWorker.start();
 
 app.listen(PORT, "0.0.0.0", () => {
