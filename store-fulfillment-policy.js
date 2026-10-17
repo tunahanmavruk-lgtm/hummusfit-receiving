@@ -6,10 +6,11 @@ const LOCATIONS = Object.freeze({
   Lynbrook:'97226588407', 'Miller Place':'105516073207', Ronkonkoma:'66352283895',
   Selden:'66819555575', Woodbury:'97226555639',
 });
-// Stage handler first; activate partial fulfillment only after the live Flow
-// no longer contains the corresponding legacy inventory-write action.
-const PARTIAL_FULFILLMENT_STORES = Object.freeze(['Huntington']);
-const STORE_CUTOVER = '2026-10-17T13:14:25Z';
+// All 13 legacy writers removed and all 14 direct callbacks verified against
+// the official active Flow export on 2026-10-17. Huntington's original key and
+// cutover remain unchanged; historical receipts are never replayed.
+const PARTIAL_FULFILLMENT_STORES = Object.freeze(Object.keys(LOCATIONS));
+const STORE_CUTOVER = '2026-10-17T13:26:05Z';
 function storePolicy(store) {
   if(!Object.hasOwn(LOCATIONS,store)) throw Error('Store is outside the 14 POS locations');
   return {store,locationId:'gid://shopify/Location/'+LOCATIONS[store],
