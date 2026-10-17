@@ -491,6 +491,15 @@ app.post('/api/retry-automatic-reconciliation',requireReportsManager,(req,res)=>
   } catch(e) { return res.status(409).json({error:e.message}); }
 });
 
+app.post('/api/confirm-retail-pack-count',requireReportsManager,(req,res)=>{
+  try {
+    const reports=loadReports(),report=reports.find(r=>r.id===String(req.body?.reportId||''));
+    const changed=require('./retail-pack-confirmation').confirmRetailPackCount(report,req.body,req.hfLogisticsIdentity.sub);
+    if(changed)saveReports(reports);
+    res.json({ok:true,changed,report:{...report,inventoryReconciliation:reconciliationStatus(report)}});
+  }catch(error){res.status(409).json({error:error.message});}
+});
+
 // Retry previously saved, verified Retail Essentials lines after
 // an approved case-to-unit mapping is added. Only the exact saved counts are
 // submitted; Route Board owns the Shopify write and its idempotency ledger.
@@ -500,6 +509,9 @@ app.post("/api/retry-retail-conversion", requireReportsManager, async (req, res)
   let retail;
   try { retail = retryRetailLines(report); }
   catch (error) { return res.status(400).json({ error: error.message }); }
+  const caseSkus=req.body?.caseSkus;
+  if(caseSkus!==undefined&&(!Array.isArray(caseSkus)||!caseSkus.length||new Set(caseSkus).size!==caseSkus.length||
+      caseSkus.some(s=>retail.filter(i=>i.sku===s).length!==1)))return res.status(400).json({error:'Exact unique saved retail SKUs required'});
   const token = signPosReceiptToken();
   if (!token) return res.status(503).json({ error: "Secure POS receipt is unavailable" });
   try {
@@ -508,6 +520,7 @@ app.post("/api/retry-retail-conversion", requireReportsManager, async (req, res)
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({
         store: report.store, orderId: report.orderId,
+        ...(caseSkus===undefined?{}:{caseSkus}),
         receivedCounts: Object.fromEntries(retail.map((item) => [item.sku, item.actuallyReceived])),
         receiptEvidence: {id:report.id,store:report.store,orderId:report.orderId,orderName:report.orderName,
           submittedAt:report.submittedAt,items:retail.map(({sku,orderedQty,expectedFromPicking,actuallyReceived})=>({sku,orderedQty,expectedFromPicking,actuallyReceived}))},
