@@ -20,7 +20,8 @@ function retryRetailLines(report) {
 }
 
 function confirmedBackorder(report,item,entry) {
-  return report.store==='Huntington'&&entry?.sku===item.sku&&entry.status==='backordered'&&entry.shopifyVerified===true&&
+  return POS_STORES.has(report.store)&&entry?.sku===item.sku&&entry.status==='backordered'&&entry.shopifyVerified===true&&
+    (entry.store===report.store || (!entry.store&&report.store==='Huntington'))&&
     entry.orderId===report.orderId&&/^gid:\/\/shopify\/LineItem\/\d+$/.test(entry.lineItemId||'')&&
     entry.units===0&&entry.orderedCases===item.orderedQty&&item.actuallyReceived===0&&item.expectedFromPicking===0&&
     Number.isFinite(Date.parse(entry.verifiedAt));

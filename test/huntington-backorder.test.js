@@ -35,3 +35,18 @@ test('other stores and mismatched backorder quantities cannot use the Huntington
     const f=fixture();change(f);mergeRetailPostings(f.report,[f.report.items[1]],{results:[f.result]});assert.ok(reconciliationStatus(f.report).pendingCount>0);
   }
 });
+test('all 14 stores retain unchanged food deltas and exact store-bound backorder proof',()=>{
+  const {LOCATIONS}=require('../store-fulfillment-policy');
+  for(const [store,location] of Object.entries(LOCATIONS)) {
+    const f=fixture();f.report.store=store;f.report.id=store+'::receipt';
+    f.order.customer.tags=['Hummus Fit '+store];f.order.fulfillments[0].createdAt='2026-10-18T22:00:00Z';
+    f.group.referenceDocumentUri=`gid://agent-hazar-receiving/FoodCorrection/${correctionKey(f.report,'food')}`;
+    f.group.changes[0].location.id='gid://shopify/Location/'+location;f.result.store=store;
+    mergeVerifiedCorrection(f.report,verifiedCorrection(f.report,'food',f.group,f.order));
+    mergeRetailPostings(f.report,[f.report.items[1]],{results:[f.result]});
+    assert.equal(reconciliationStatus(f.report).status,'received_with_backorder',store);
+    assert.equal(f.report.inventoryCorrections[0].delta,2,store);
+    mergeRetailPostings(f.report,[f.report.items[1]],{results:[]});
+    assert.equal(f.report.inventoryCorrections.length,1,store);
+  }
+});

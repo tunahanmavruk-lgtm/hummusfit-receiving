@@ -2,20 +2,18 @@
 const WAREHOUSE = 'gid://shopify/Location/103133642999';
 const LOCATION = 'gid://shopify/Location/103133511927';
 const CUTOVER = Date.parse('2026-10-16T21:40:00Z');
+const {orderPolicy}=require('./store-fulfillment-policy');
 function deliveredQuantities(order) {
-  const tags = [...(order?.tags || []), ...(order?.customer?.tags || [])]
-    .map(t => String(t).trim().toLowerCase());
-  const destinations = [...new Set(tags.filter(t => t.startsWith('hummus fit ') && t !== 'hummus fit store'))];
-  if (destinations.length !== 1 || destinations[0] !== 'hummus fit huntington' ||
-      !['PARTIALLY_FULFILLED', 'FULFILLED'].includes(order?.displayFulfillmentStatus) ||
+  const policy=orderPolicy(order);
+  if (!['PARTIALLY_FULFILLED', 'FULFILLED'].includes(order?.displayFulfillmentStatus) ||
       order.cancelledAt || !Array.isArray(order.lineItems?.nodes) || order.lineItems.pageInfo?.hasNextPage ||
-      !order.fulfillments?.length || order.fulfillments.length >= 100) throw new Error('Exact Huntington warehouse fulfillment required');
+      !order.fulfillments?.length || order.fulfillments.length >= 100) throw new Error('Exact store warehouse fulfillment required');
   const totals = new Map(), seen = new Set();
   const lines = new Map(order.lineItems.nodes.map(l => [l.id, l]));
   if (lines.size !== order.lineItems.nodes.length) throw new Error('Duplicate order line identity');
   for (const f of order.fulfillments) {
     if (f.status !== 'SUCCESS' || f.location?.id !== WAREHOUSE ||
-        !(Date.parse(f.createdAt) >= CUTOVER) || !/^gid:\/\/shopify\/Fulfillment\/\d+$/.test(f.id || '') ||
+        !(Date.parse(f.createdAt) >= policy.cutover) || !/^gid:\/\/shopify\/Fulfillment\/\d+$/.test(f.id || '') ||
         seen.has(f.id) || !Array.isArray(f.fulfillmentLineItems?.nodes) ||
         f.fulfillmentLineItems.pageInfo?.hasNextPage) throw new Error('Complete post-cutover Shipping Warehouse fulfillment lines required');
     seen.add(f.id);
@@ -37,7 +35,7 @@ function fullyDelivered(order, sku) {
   return lines.length === 1 && totals.get(lines[0].id) === lines[0].quantity;
 }
 function partialReceiptAllowed(report, order) {
-  if (report.store !== 'Huntington' || order.displayFulfillmentStatus !== 'PARTIALLY_FULFILLED') return false;
+  if (order.displayFulfillmentStatus !== 'PARTIALLY_FULFILLED' || orderPolicy(order).store!==report.store) return false;
   const totals = deliveredQuantities(order);
   return (report.items || []).every(item => {
     const lines = order.lineItems.nodes.filter(l => l.sku && l.sku === item.sku);
