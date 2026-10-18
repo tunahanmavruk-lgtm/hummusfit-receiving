@@ -694,6 +694,7 @@ app.get(["/", "/index.html"], requireReportsManager, (req, res) => {
 });
 app.get("/receiving.html", (req, res) => res.status(404).send("Not found"));
 
+require('./facts-report-export').registerFactsReportExport(app, {readReports:loadReports,verifyToken:verifyLogisticsToken});
 app.use(express.static(path.join(__dirname, "public")));
 
 const receivingWorker=createReconciliationWorker({
