@@ -131,7 +131,7 @@
     box-shadow: var(--shadow-md);
   }
   .item-row{
-    display:flex; align-items:center; gap:12px;
+    display:flex; flex-wrap:wrap; align-items:center; gap:12px;
     padding:12px 0; border-top:1px solid var(--line);
   }
   .item-row:first-child{ border-top:none; }
@@ -152,7 +152,14 @@
     box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--line);
     border:none;
   }
-  .item-title{ font-weight:600; font-size:14px; flex:1; }
+  .item-title{ font-weight:600; font-size:14px; flex:1; min-width:0; }
+  .zero-received-btn{
+    flex:0 0 calc(100% - 60px); margin-left:60px; padding:8px 10px;
+    border:1px solid var(--orange); border-radius:8px; background:var(--orange-tint);
+    color:var(--orange); font-family:'Poppins',sans-serif; font-size:12px;
+    font-weight:700; text-align:left; cursor:pointer;
+  }
+  .zero-received-btn.done{ border-color:var(--good); background:var(--good-tint); color:var(--good); }
   .item-count{
     font-family:'JetBrains Mono', monospace; font-weight:700; font-size:13.5px;
     padding:5px 12px; border-radius:999px; background:var(--card-2); color:var(--dim);
@@ -798,11 +805,15 @@
 
       var resolved = !!resolvedKeys[key];
       var cls = scanned >= expectedQty && expectedQty > 0 ? 'complete' : (scanned > 0 ? 'scanning' : '');
+      var zeroReceived = resolved && scanned === 0;
       html += '<div class="item-row' + (resolved ? '' : ' unresolved') + '"'+itemSearchAttribute(item)+'>'
         + thumb
         + '<span class="item-title">' + escapeHtml(item.title) + '</span>'
         + '<button class="item-count ' + cls + '" data-manual-key="' + escapeHtml(key) + '" data-manual-title="' + escapeHtml(item.title) + '">' + scanned + ' / ' + expectedQty + '</button>'
-        + '<button class="confirm-btn' + (resolved ? ' done' : '') + '" data-confirm-key="' + escapeHtml(key) + '" data-confirm-qty="' + expectedQty + '" title="Confirm this item was received as expected">' + (resolved ? '✓' : '☐') + '</button>'
+        + '<button class="confirm-btn' + (resolved && !zeroReceived ? ' done' : '') + '" data-confirm-key="' + escapeHtml(key) + '" data-confirm-qty="' + expectedQty + '" title="Mark the full picked quantity as received">' + (resolved && !zeroReceived ? '✓' : '☐') + '</button>'
+        + ((!resolved || zeroReceived) && expectedQty > 0
+          ? '<button type="button" class="zero-received-btn' + (zeroReceived ? ' done' : '') + '" data-zero-key="' + escapeHtml(key) + '" data-zero-title="' + escapeHtml(item.title) + '">' + (zeroReceived ? '✓ Didn’t come — 0 received' : 'Didn’t come — mark 0 received') + '</button>'
+          : '')
         + (receivingPolicy.category === 'retail_essentials' && receivingPolicy.unitsPerCase > 0
           ? '<span class="inventory-note">' + receivingPolicy.pickedCases + ' case(s) × ' + receivingPolicy.unitsPerCase + ' = ' + receivingPolicy.projectedPosUnits + ' POS units when this receipt is verified. Unmapped items need review.</span>'
           : receivingPolicy.category === 'other_essentials'
@@ -871,6 +882,18 @@
         // confirmation, just faster for the common case.
         scannedCounts[key] = qty;
         resolvedKeys[key] = true;
+        render();
+      });
+    });
+    document.querySelectorAll('[data-zero-key]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        tapFeedback();
+        var key = btn.getAttribute('data-zero-key');
+        var current = scannedCounts[key] || 0;
+        if(current > 0 && !confirm('You counted ' + current + ' of "' + btn.getAttribute('data-zero-title') + '". Change that to 0 received?')) return;
+        scannedCounts[key] = 0;
+        resolvedKeys[key] = true;
+        confirmFinish = false;
         render();
       });
     });
