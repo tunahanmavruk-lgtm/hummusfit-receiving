@@ -9,6 +9,21 @@
   function signature(expected){
     return JSON.stringify((expected.items || []).map(function(i){return [i.sku || i.title,i.expectedQty,i.pickedQty,i.status];}).sort(function(a,b){return JSON.stringify(a).localeCompare(JSON.stringify(b));}));
   }
+  function rebase(draft,current){
+    if(draft.pending || canonical(draft.expected.orderId)!==canonical(current.orderId))return {reviewRequired:true};
+    var key=function(i){return i.sku||i.title;},old=draft.expected.items||[],fresh=current.items||[];
+    var oldKeys=old.map(key).sort(),newKeys=fresh.map(key).sort();
+    if(JSON.stringify(oldKeys)!==JSON.stringify(newKeys)||new Set(newKeys).size!==newKeys.length)return {reviewRequired:true};
+    var result=JSON.parse(JSON.stringify(draft)),changed=[];
+    for(var i=0;i<fresh.length;i++){
+      var item=fresh[i],id=key(item),prior=old.find(function(p){return key(p)===id;});
+      if(prior.sku!==item.sku)return {reviewRequired:true};
+      var hasCount=Object.prototype.hasOwnProperty.call(result.scannedCounts||{},id),count=hasCount?result.scannedCounts[id]:0;
+      if(!Number.isSafeInteger(count)||count<0||count>100000||(item.status==='missing'&&count>0))return {reviewRequired:true};
+      if(prior.expectedQty!==item.expectedQty||prior.pickedQty!==item.pickedQty||prior.title!==item.title||!hasCount){result.resolvedKeys[id]=false;changed.push(id);}
+    }
+    result.expected=JSON.parse(JSON.stringify(current));return {draft:result,changedKeys:changed,reviewRequired:false};
+  }
   function create(storage, store){
     var prefix = 'hf-receiving-draft-v1:' + encodeURIComponent(store) + ':';
     var seen = Object.create(null);
@@ -20,6 +35,12 @@
         var draft = JSON.parse(raw);
         if(draft.version !== 1 || draft.store !== store || canonical(draft.expected.orderId) !== canonical(order)) throw new Error('Saved draft could not be verified. Do not clear browser storage; contact logistics.');
         return draft;
+      },
+      archive: function(draft){
+        var clean=JSON.parse(JSON.stringify(draft));if(clean.pending)delete clean.pending.access;
+        var target='hf-receiving-review-backup-v1:'+encodeURIComponent(store)+':'+Date.now()+':'+Math.random().toString(36).slice(2);
+        var raw=JSON.stringify(clean);storage.setItem(target,raw);
+        if(storage.getItem(target)!==raw)throw new Error('Previous receiving counts could not be preserved. Keep this page open.');
       },
       save: function(draft){
         var clean = JSON.parse(JSON.stringify(draft));
@@ -48,5 +69,5 @@
       }
     };
   }
-  return { enabled: function(store){return stores.indexOf(store)!==-1;}, canonical:canonical, signature:signature, create:create };
+  return { enabled: function(store){return stores.indexOf(store)!==-1;}, canonical:canonical, signature:signature, rebase:rebase, create:create };
 });

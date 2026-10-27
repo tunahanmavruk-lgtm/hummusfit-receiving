@@ -318,6 +318,9 @@ app.get('/api/receiving-receipt/:store', requireStoreAccess, (req, res) => {
 
 app.post("/api/submit-receiving-check", requireStoreAccess, async (req, res) => {
   try {
+    if (/^(Isolated browser check|Local browser check(?: — not submitted)?|Local UI verification)$/i.test(String(req.body?.receivedBy||'').trim())) {
+      return res.status(400).json({notSaved:true,code:'diagnostic_submission_blocked',error:'Diagnostic checks cannot create a store receiving receipt.'});
+    }
     if (POS_STORES.has(req.body.store)) return await withSubmissionLock(req.body.store, () => submitReceipt(req, res));
     return await submitReceipt(req, res);
   } catch (e) {
@@ -357,7 +360,7 @@ async function submitReceipt(req, res) {
       orderId = delivery.orderId;
       orderName = delivery.orderName;
       pickedBy = delivery.pickedBy;
-    } catch(e) { return res.status(400).json({notSaved:true,error:e.message}); }
+    } catch(e) { return res.status(400).json({notSaved:true,code:"delivery_details_changed",error:e.message}); }
   }
 
   let totalExpected = 0;
@@ -660,6 +663,15 @@ app.get("/manifest/:store.webmanifest", (req, res) => {
   });
 });
 
+// A distinct entry URL avoids reopening an older receiving tab on mobile.
+app.get('/today/:store',(req,res)=>{
+  const store=req.params.store;
+  if(!ALL_STORES.includes(store))return res.status(404).send('Unknown store');
+  const access=signStoreToken(store);if(!access)return res.status(503).send('Store access is unavailable');
+  res.set('Cache-Control','private, no-store');
+  res.redirect(303,`/receiving/${encodeURIComponent(store)}?access=${encodeURIComponent(access)}&visit=${crypto.randomUUID()}`);
+});
+
 app.get("/receiving/:store", (req, res) => {
   const store = req.params.store;
   if (!ALL_STORES.includes(store)) {
@@ -673,7 +685,7 @@ app.get("/receiving/:store", (req, res) => {
       return res.status(503).type("html").send("<!doctype html><meta name=viewport content='width=device-width'><title>Receiving temporarily unavailable</title><style>body{font-family:Arial,sans-serif;background:#edf5f2;color:#173b38;display:grid;place-items:center;min-height:100vh;margin:0}.card{max-width:420px;margin:24px;padding:32px;border-radius:18px;background:white;box-shadow:0 18px 50px #174b4722;text-align:center}h1{font-size:24px}p{line-height:1.6;color:#667b78}</style><main class=card><h1>Receiving temporarily unavailable</h1><p>Please contact Hummus Fit logistics and try this QR code again.</p></main>");
     }
     res.set("Cache-Control", "private, no-store");
-    return res.redirect(302, `/receiving/${encodeURIComponent(store)}?access=${encodeURIComponent(currentAccess)}`);
+    return res.redirect(302, `/receiving/${encodeURIComponent(store)}?access=${encodeURIComponent(currentAccess)}&visit=${crypto.randomUUID()}`);
   }
 
   if (!verifyStoreToken(access, store)) {

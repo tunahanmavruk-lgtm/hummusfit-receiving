@@ -31,6 +31,9 @@ test('staff confirmation saves immediately, then verifies and posts in backgroun
   const access=payload+'.'+crypto.createHmac('sha256','store-test-only').update(payload).digest('base64url');
   const url=`http://127.0.0.1:${port}/api/submit-receiving-check`;
   const body={store:'Holbrook',access,submissionId:'a'.repeat(32),orderId:'gid://shopify/Order/1',orderName:'#1',expectedItems:[{title:'Crispy Chicken Wrap',sku:'WRAP',expectedQty:7,pickedQty:7}],scannedCounts:{WRAP:0}};
+  const diagnostic=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,receivedBy:'Isolated browser check'})});
+  assert.equal(diagnostic.status,400);assert.equal((await diagnostic.json()).code,'diagnostic_submission_blocked');
+  assert.equal(fs.existsSync(path.join(tmp,'reports.json')),false);assert.equal(correctionRequests,0);
   const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(5000)});
   assert.equal(response.status,200);const saved=await response.json();assert.equal(saved.report.automation.status,'queued');
   assert.equal(JSON.parse(fs.readFileSync(path.join(tmp,'reports.json'))).length,1);

@@ -7,7 +7,7 @@ const expected={orderId:'gid://shopify/Order/100',orderName:'#100',pickedBy:'Tes
   {sku:'WRAP',title:'Crispy Chicken Wrap',expectedQty:2,pickedQty:2,status:'picked'},
   {sku:'BOWL',title:'Zeus Bowl',scanCodes:['123456789099'],expectedQty:1,pickedQty:1,status:'picked'}]};
 async function fixture(browser,{failStorage=false,conflict=false,initialUnavailable=false}={}){
-  const context=await browser.newContext({viewport:{width:390,height:844}}),page=await context.newPage();
+  const context=await browser.newContext({serviceWorkers:'block',viewport:{width:390,height:844}}),page=await context.newPage();
   const errors=[],posts=[];let report=null,first=true,catalogStatus='matched',currentExpected=structuredClone(expected),expectedStatus=initialUnavailable?409:200;
   page.on('pageerror',e=>errors.push(e.message));
   if(failStorage)await page.addInitScript(()=>{Storage.prototype.setItem=function(){throw new Error('Storage is full');};});

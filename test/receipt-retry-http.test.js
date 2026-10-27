@@ -25,6 +25,11 @@ test('all 14 stores: restart/lost response/parallel requests reuse one receipt, 
   const token=store=>{const p=Buffer.from(JSON.stringify({v:1,scope:'receiving.store',store})).toString('base64url');return p+'.'+crypto.createHmac('sha256','test-only').update(p).digest('base64url');};
   const base=`http://127.0.0.1:${port}`;
   const post=body=>fetch(base+'/api/submit-receiving-check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const freshA=await fetch(base+'/today/Holbrook',{redirect:'manual'}),freshB=await fetch(base+'/today/Holbrook',{redirect:'manual'});
+  assert.equal(freshA.status,303);assert.match(freshA.headers.get('cache-control'),/no-store/);
+  const firstEntry=new URL(freshA.headers.get('location'),base),secondEntry=new URL(freshB.headers.get('location'),base);
+  assert.equal(firstEntry.pathname,'/receiving/Holbrook');assert.equal(firstEntry.searchParams.get('access'),token('Holbrook'));
+  assert.notEqual(firstEntry.searchParams.get('visit'),secondEntry.searchParams.get('visit'));
   const bodies=[...POS_STORES].map((store,i)=>({store,access:token(store),submissionId:crypto.randomUUID(),orderId:'gid://shopify/Order/'+(i+1),orderName:'#'+(i+1),receivedBy:'Test',expectedItems:[{sku:'WRAP',title:'Food',expectedQty:2,pickedQty:2}],scannedCounts:{WRAP:0}}));
   const first=await Promise.all(bodies.map(async body=>{const r=await post(body);assert.equal(r.status,200);return r.json();}));
   await stop();await start();

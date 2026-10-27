@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="/receiving-policy.js"></script>
 <script src="/receiving-barcode.js"></script>
-<script src="/receiving-progress.js?v=20261014-1"></script>
+<script src="/receiving-progress.js?v=20261027-2"></script>
 <style>
   :root{
     --bg:#FFFFFF;
@@ -445,10 +445,13 @@
         restoreDraft(draft);
         if(progress.signature(draft.expected)!==progress.signature(expected)){
           // Never silently apply old confirmations to changed picking data.
-          expected=draft.expected;
-          if(!pendingSubmission){
-            draftMismatch=true;
-            submissionError='The delivery details changed after this draft was saved. Your original counts are preserved. Contact logistics before submitting.';
+          var current=expected,rebased=progress.rebase?progress.rebase(draft,current):{reviewRequired:true};
+          if(!pendingSubmission&&!rebased.reviewRequired){
+            draftStore.archive(draft);restoreDraft(rebased.draft);expected=current;
+            submissionError=rebased.changedKeys.length?'Picking details were updated. Your counts are preserved; please recheck the changed items.':'Picking details updated. Your saved physical counts are preserved.';
+          }else{
+            expected=draft.expected;
+            if(!pendingSubmission){draftMismatch=true;submissionError='The delivery contents changed. Your original counts are preserved. Contact logistics to review added or removed items before submitting.';}
           }
         }
       }
@@ -1308,7 +1311,7 @@
       if(result.status===409 && result.data.code==='receipt_conflict') receiptConflict=true;
       // Only an explicit pre-save validation rejection may unlock editing.
       // Timeouts, bad JSON and all unknown outcomes must resend identical counts.
-      if(result.status===400 && result.data.notSaved===true){pendingSubmission=null;saveProgress();}
+      if(result.status===400 && result.data.notSaved===true){pendingSubmission=null;var saved=saveProgress();if(saved&&result.data.code==='delivery_details_changed'){location.reload();return;}}
       render();
     }).catch(function(){
       submissionInFlight=false;
