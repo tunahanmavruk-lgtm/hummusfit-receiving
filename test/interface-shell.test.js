@@ -76,6 +76,8 @@ test('permanent store QR URLs upgrade to signed store-only sessions', () => {
   assert.match(server, /const targetUrl = `\$\{req\.protocol\}:\/\/\$\{req\.get\("host"\)\}\/receiving\/\$\{encodeURIComponent\(store\)\}`/);
   assert.match(server, /if \(!access\) \{/);
   assert.match(server, /signStoreToken\(store\)/);
-  assert.match(server, /res\.redirect\(302, `\/receiving\/\$\{encodeURIComponent\(store\)\}\?access=/);
+  assert.match(server, /return redirectFreshReceiving\(store, res\)/);
+  assert.match(server, /res\.redirect\(303, freshReceivingPath\(store, access\)\)/);
+  assert.match(server, /currentReceivingEntry\(req\.query\)/);
   assert.match(server, /if \(!verifyStoreToken\(access, store\)\)/);
 });

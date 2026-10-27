@@ -1,4 +1,4 @@
-const CACHE_NAME = "hf-receiving-shell-v1";
+const CACHE_NAME = "hf-receiving-shell-v2";
 const STATIC_ASSETS = [
   "/receiving-policy.js",
   "/assets/logo.png",
@@ -23,6 +23,6 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
   // Receiving orders and reports must always be current. Never cache an API
   // response or a signed store receiving page.
-  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/receiving/")) return;
+  if (event.request.mode === 'navigate' || url.pathname.startsWith("/api/") || url.pathname.startsWith("/receiving/") || url.pathname.startsWith('/today/')) return;
   event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
 });

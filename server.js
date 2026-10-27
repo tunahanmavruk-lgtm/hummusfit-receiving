@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const QRCode = require("qrcode");
+const { freshReceivingPath, currentReceivingEntry } = require('./receiving-entry');
 const { buildReceivingPolicy, receiptCountKey } = require("./receiving-policy");
 const { reconciliationStatus, POS_STORES } = require("./reconciliation-status");
 const { cleanExtraLines, verifyExtraLines } = require("./receiving-extra-evidence");
@@ -663,13 +664,18 @@ app.get("/manifest/:store.webmanifest", (req, res) => {
   });
 });
 
-// A distinct entry URL avoids reopening an older receiving tab on mobile.
+// All entry points, including the original printed QR codes and old signed
+// bookmarks, use the same current-day, unique-visit redirect.
+function redirectFreshReceiving(store, res) {
+  const access = signStoreToken(store);
+  if (!access) return res.status(503).send('Store access is unavailable');
+  res.set({'Cache-Control':'private, no-store, no-cache, max-age=0, must-revalidate', 'Pragma':'no-cache', 'Expires':'0', 'Referrer-Policy':'no-referrer'});
+  return res.redirect(303, freshReceivingPath(store, access));
+}
 app.get('/today/:store',(req,res)=>{
   const store=req.params.store;
   if(!ALL_STORES.includes(store))return res.status(404).send('Unknown store');
-  const access=signStoreToken(store);if(!access)return res.status(503).send('Store access is unavailable');
-  res.set('Cache-Control','private, no-store');
-  res.redirect(303,`/receiving/${encodeURIComponent(store)}?access=${encodeURIComponent(access)}&visit=${crypto.randomUUID()}`);
+  return redirectFreshReceiving(store, res);
 });
 
 app.get("/receiving/:store", (req, res) => {
@@ -680,18 +686,14 @@ app.get("/receiving/:store", (req, res) => {
 
   const access = String(req.query.access || "");
   if (!access) {
-    const currentAccess = signStoreToken(store);
-    if (!currentAccess) {
-      return res.status(503).type("html").send("<!doctype html><meta name=viewport content='width=device-width'><title>Receiving temporarily unavailable</title><style>body{font-family:Arial,sans-serif;background:#edf5f2;color:#173b38;display:grid;place-items:center;min-height:100vh;margin:0}.card{max-width:420px;margin:24px;padding:32px;border-radius:18px;background:white;box-shadow:0 18px 50px #174b4722;text-align:center}h1{font-size:24px}p{line-height:1.6;color:#667b78}</style><main class=card><h1>Receiving temporarily unavailable</h1><p>Please contact Hummus Fit logistics and try this QR code again.</p></main>");
-    }
-    res.set("Cache-Control", "private, no-store");
-    return res.redirect(302, `/receiving/${encodeURIComponent(store)}?access=${encodeURIComponent(currentAccess)}&visit=${crypto.randomUUID()}`);
+    return redirectFreshReceiving(store, res);
   }
 
   if (!verifyStoreToken(access, store)) {
     return res.status(403).type("html").send("<!doctype html><meta name=viewport content='width=device-width'><title>Secure receiving link required</title><style>body{font-family:Arial,sans-serif;background:#edf5f2;color:#173b38;display:grid;place-items:center;min-height:100vh;margin:0}.card{max-width:420px;margin:24px;padding:32px;border-radius:18px;background:white;box-shadow:0 18px 50px #174b4722;text-align:center}h1{font-size:24px}p{line-height:1.6;color:#667b78}</style><main class=card><h1>Secure receiving link required</h1><p>Please scan the current QR code supplied by Hummus Fit. This link cannot open another store’s orders.</p></main>");
   }
-  res.set("Cache-Control", "private, no-store");
+  if (!currentReceivingEntry(req.query)) return redirectFreshReceiving(store, res);
+  res.set("Cache-Control", "private, no-store, no-cache, max-age=0, must-revalidate");
   res.set("Referrer-Policy", "no-referrer");
   res.sendFile(path.join(__dirname, "public", "receiving.html"));
 });

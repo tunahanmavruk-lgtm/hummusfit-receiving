@@ -7,6 +7,7 @@ test('all 14 stores: restart/lost response/parallel requests reuse one receipt, 
   t.after(()=>fs.rmSync(tmp,{recursive:true,force:true}));
   for(const f of fs.readdirSync(root).filter(f=>f.endsWith('.js')))fs.copyFileSync(path.join(root,f),path.join(tmp,f));
   fs.symlinkSync(path.join(root,'node_modules'),path.join(tmp,'node_modules'),'dir');
+  fs.symlinkSync(path.join(root,'public'),path.join(tmp,'public'),'dir');
   const socket=http.createServer();await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address().port;await new Promise(r=>socket.close(r));
   let reads=0;
   const mock=http.createServer((req,res)=>{
@@ -30,6 +31,26 @@ test('all 14 stores: restart/lost response/parallel requests reuse one receipt, 
   const firstEntry=new URL(freshA.headers.get('location'),base),secondEntry=new URL(freshB.headers.get('location'),base);
   assert.equal(firstEntry.pathname,'/receiving/Holbrook');assert.equal(firstEntry.searchParams.get('access'),token('Holbrook'));
   assert.notEqual(firstEntry.searchParams.get('visit'),secondEntry.searchParams.get('visit'));
+  for (const store of POS_STORES) {
+    const originalQR = '/receiving/'+encodeURIComponent(store);
+    const first = await fetch(base+originalQR,{redirect:'manual'});
+    const again = await fetch(base+originalQR,{redirect:'manual'});
+    assert.equal(first.status,303);
+    assert.match(first.headers.get('cache-control'),/no-store/);
+    const entry = new URL(first.headers.get('location'),base);
+    assert.equal(entry.searchParams.get('access'),token(store));
+    assert.notEqual(entry.searchParams.get('visit'),new URL(again.headers.get('location'),base).searchParams.get('visit'));
+    const page = await fetch(entry,{redirect:'manual'});
+    assert.equal(page.status,200,'fresh redirect terminates at receiving page');
+    assert.match(page.headers.get('cache-control'),/no-store/);
+    assert.match(await page.text(),/Loading today's delivery/);
+    const oldSigned = await fetch(base+originalQR+'?access='+encodeURIComponent(token(store)),{redirect:'manual'});
+    assert.equal(oldSigned.status,303,'legacy signed QR/bookmark also renews');
+    entry.searchParams.set('day','2026-10-26');
+    assert.equal((await fetch(entry,{redirect:'manual'})).status,303,'yesterday entry renews');
+    entry.searchParams.set('access',token('Unknown Store'));
+    assert.equal((await fetch(entry,{redirect:'manual'})).status,403,'entry renewal cannot cross store scope');
+  }
   const bodies=[...POS_STORES].map((store,i)=>({store,access:token(store),submissionId:crypto.randomUUID(),orderId:'gid://shopify/Order/'+(i+1),orderName:'#'+(i+1),receivedBy:'Test',expectedItems:[{sku:'WRAP',title:'Food',expectedQty:2,pickedQty:2}],scannedCounts:{WRAP:0}}));
   const first=await Promise.all(bodies.map(async body=>{const r=await post(body);assert.equal(r.status,200);return r.json();}));
   await stop();await start();

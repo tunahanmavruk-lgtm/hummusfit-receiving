@@ -543,7 +543,9 @@
     if(!Number.isFinite(date.getTime()))return 'Delivery details';
     return (data.deliveryDate?'Delivery: ':'Picked: ')+date.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',timeZone:'America/New_York'});
   }
-  function refreshCurrentDelivery(){
+  function openFreshReceiving(){location.replace('/receiving/'+encodeURIComponent(storeName));}
+  function refreshCurrentDelivery(event){
+    var restoredPage=event&&event.type==='pageshow'&&event.persisted;
     if(deliveryRefreshInFlight||expectedLoadPending||submissionInFlight||pendingLookupCount||document.visibilityState==='hidden')return;
     deliveryRefreshInFlight=true;
     fetch('/api/expected/'+encodeURIComponent(storeName)+'?access='+encodeURIComponent(storeAccessToken),{cache:'no-store',signal:AbortSignal.timeout(15000)})
@@ -559,15 +561,16 @@
         }
         if(!result.data.orderId)return;
         if(expected&&progress.canonical(expected.orderId)===progress.canonical(result.data.orderId)){
+          if(restoredPage&&finishedReport){openFreshReceiving();return;}
           notice.hidden=true;document.getElementById('mainContent').hidden=false;return;
         }
         var hasDraft=pendingSubmission||Object.keys(resolvedKeys).length||Object.keys(extraScans).length||receivedByValue.trim()||draftMismatch||receiptConflict||draftProblem;
         // Completed receipts cannot keep a store stuck on an earlier order.
         // Active or uncertain drafts are preserved and require an explicit switch.
-        if(!expected||finishedReport||!hasDraft){location.reload();return;}
+        if(!expected||finishedReport||!hasDraft){openFreshReceiving();return;}
         notice.hidden=false;notice.textContent='A new delivery '+(result.data.orderName||'')+' is ready. Your current draft stays saved on this device. ';
         var button=document.createElement('button');button.type='button';button.textContent='Open current delivery';
-        button.onclick=function(){if(saveProgress())location.reload();};notice.appendChild(button);
+        button.onclick=function(){if(saveProgress())openFreshReceiving();};notice.appendChild(button);
       }).catch(function(){/* Keep saved counts and retry on the next check. */})
       .finally(function(){deliveryRefreshInFlight=false;});
   }

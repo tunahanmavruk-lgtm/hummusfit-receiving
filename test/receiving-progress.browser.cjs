@@ -6,9 +6,10 @@ const root=path.resolve(__dirname,'..');
 const expected={orderId:'gid://shopify/Order/100',orderName:'#100',pickedBy:'Test',crateCount:1,items:[
   {sku:'WRAP',title:'Crispy Chicken Wrap',expectedQty:2,pickedQty:2,status:'picked'},
   {sku:'BOWL',title:'Zeus Bowl',scanCodes:['123456789099'],expectedQty:1,pickedQty:1,status:'picked'}]};
-async function fixture(browser,{failStorage=false,conflict=false,initialUnavailable=false}={}){
+async function fixture(browser,{failStorage=false,conflict=false,initialUnavailable=false,savedReceipt=false}={}){
   const context=await browser.newContext({serviceWorkers:'block',viewport:{width:390,height:844}}),page=await context.newPage();
   const errors=[],posts=[];let report=null,first=true,catalogStatus='matched',currentExpected=structuredClone(expected),expectedStatus=initialUnavailable?409:200;
+  if(savedReceipt)report={id:'Holbrook::saved',store:'Holbrook',orderId:expected.orderId,receivedBy:'Staff',submittedAt:'2026-10-27T14:00:00Z',items:[],hasErrors:false,automation:{status:'complete'}};
   page.on('pageerror',e=>errors.push(e.message));
   if(failStorage)await page.addInitScript(()=>{Storage.prototype.setItem=function(){throw new Error('Storage is full');};});
   await page.clock.install();
@@ -36,8 +37,9 @@ async function fixture(browser,{failStorage=false,conflict=false,initialUnavaila
   });
   await page.goto('http://receiving.test/receiving/Holbrook?access=test-only');
   if(initialUnavailable)await page.getByText('Today’s delivery is not yet verified for receiving.',{exact:false}).waitFor();
+  else if(savedReceipt)await page.getByText('Receiving report saved.',{exact:false}).waitFor();
   else await page.locator('#receivedByInput').waitFor();
-  return {page,context,posts,errors,setCatalogStatus(value){catalogStatus=value;},setDelivery(value){currentExpected=value;expectedStatus=200;}};
+  return {page,context,posts,errors,setCatalogStatus(value){catalogStatus=value;},setUnavailable(){expectedStatus=409;},setDelivery(value){currentExpected=value;expectedStatus=200;}};
 }
 async function counts(page){
   await page.locator('#receivedByInput').fill('Receiving Test');
@@ -105,6 +107,20 @@ async function run(engine,name){
     const waiting=await fixture(browser,{initialUnavailable:true});assert.equal(await waiting.page.locator('#receivedByInput').count(),0);
     waiting.setDelivery(nextDelivery);await waiting.page.clock.fastForward(31000);await waiting.page.locator('#receivedByInput').waitFor();
     assert.match(await waiting.page.locator('#dateOrderRow').textContent(),/Delivery: Tuesday, October 27/);assert.equal(waiting.posts.length,0);assert.deepEqual(waiting.errors,[]);await waiting.context.close();
+    const restored=await fixture(browser,{savedReceipt:true});
+    await restored.page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})));
+    await restored.page.waitForURL('http://receiving.test/receiving/Holbrook');
+    await restored.page.getByText('Receiving report saved.',{exact:false}).waitFor();
+    assert.equal(await restored.page.locator('#finishBtn').count(),0,'reopened completed receipt stays locked');
+    assert.equal(restored.posts.length,0);await restored.context.close();
+    const tomorrow=await fixture(browser,{savedReceipt:true});tomorrow.setUnavailable();
+    await tomorrow.page.clock.fastForward(31000);
+    await tomorrow.page.getByText('Today’s delivery is not yet verified for receiving.',{exact:false}).waitFor();
+    assert.equal(await tomorrow.page.locator('main').isVisible(),false,'old saved receipt cannot appear as today’s form');
+    tomorrow.setDelivery({...nextDelivery,deliveryDate:'2026-10-28'});
+    await tomorrow.page.clock.fastForward(31000);await tomorrow.page.locator('#receivedByInput').waitFor();
+    assert.match(await tomorrow.page.locator('#dateOrderRow').textContent(),/Delivery: Wednesday, October 28/);
+    assert.equal(tomorrow.posts.length,0);assert.deepEqual(tomorrow.errors,[]);await tomorrow.context.close();
     const zero=await fixture(browser);
     await zero.page.locator('#receivedByInput').fill('Zero Count Test');
     assert.equal(await zero.page.locator('#finishBtn').isDisabled(),true);
