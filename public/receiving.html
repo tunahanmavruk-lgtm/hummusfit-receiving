@@ -334,6 +334,7 @@
   <div class="date-order-row" id="dateOrderRow"></div>
 </header>
 
+<div id="deliveryUpdate" role="status" aria-live="polite" class="progress-notice warning" style="max-width:820px;margin:16px auto;padding:16px" hidden></div>
 <main id="mainContent">
   <div class="empty-state">Loading today's delivery…</div>
 </main>
@@ -363,7 +364,6 @@
     window.addEventListener('load', function(){ navigator.serviceWorker.register('/receiving-sw.js').catch(function(){}); });
   }
 
-  var todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'America/New_York' });
 
   // Route Board's public, CORS-enabled ETA lookup — same server this app
   // already pulls "what was picked" ground truth and picker headshots
@@ -409,6 +409,7 @@
   var confirmFinish = false, draftMismatch = false, otherDrafts = [];
   var pendingLookupCount = 0;
   var deliverySearch = '';
+  var deliveryRefreshInFlight=false,expectedLoadPending=false;
   if(progressEnabled){
     try { draftStore = progress.create(window.localStorage, storeName); }
     catch(e){ draftProblem = 'Browser storage is unavailable. Keep this page open and enable browser storage before finishing.'; }
@@ -532,18 +533,55 @@
       .catch(function(){ return null; });
   }
 
+  function deliveryHeading(data){
+    var value=data.deliveryDate ? data.deliveryDate+'T16:00:00Z' : data.completedAt;
+    if(!value)return 'Delivery details';
+    var date=new Date(value);
+    if(!Number.isFinite(date.getTime()))return 'Delivery details';
+    return (data.deliveryDate?'Delivery: ':'Picked: ')+date.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',timeZone:'America/New_York'});
+  }
+  function refreshCurrentDelivery(){
+    if(deliveryRefreshInFlight||expectedLoadPending||submissionInFlight||pendingLookupCount||document.visibilityState==='hidden')return;
+    deliveryRefreshInFlight=true;
+    fetch('/api/expected/'+encodeURIComponent(storeName)+'?access='+encodeURIComponent(storeAccessToken),{cache:'no-store',signal:AbortSignal.timeout(15000)})
+      .then(function(r){return r.json().then(function(data){return {ok:r.ok,data:data};});})
+      .then(function(result){
+        var notice=document.getElementById('deliveryUpdate');
+        if(!result.ok){
+          if(result.data.code==='current_delivery_unavailable'){
+            notice.hidden=false;notice.textContent=result.data.error;
+            if(finishedReport)document.getElementById('mainContent').hidden=true;
+          }
+          return;
+        }
+        if(!result.data.orderId)return;
+        if(expected&&progress.canonical(expected.orderId)===progress.canonical(result.data.orderId)){
+          notice.hidden=true;document.getElementById('mainContent').hidden=false;return;
+        }
+        var hasDraft=pendingSubmission||Object.keys(resolvedKeys).length||Object.keys(extraScans).length||receivedByValue.trim()||draftMismatch||receiptConflict||draftProblem;
+        // Completed receipts cannot keep a store stuck on an earlier order.
+        // Active or uncertain drafts are preserved and require an explicit switch.
+        if(!expected||finishedReport||!hasDraft){location.reload();return;}
+        notice.hidden=false;notice.textContent='A new delivery '+(result.data.orderName||'')+' is ready. Your current draft stays saved on this device. ';
+        var button=document.createElement('button');button.type='button';button.textContent='Open current delivery';
+        button.onclick=function(){if(saveProgress())location.reload();};notice.appendChild(button);
+      }).catch(function(){/* Keep saved counts and retry on the next check. */})
+      .finally(function(){deliveryRefreshInFlight=false;});
+  }
+
   function loadExpected(){
+    expectedLoadPending=true;
     // Kick off in parallel — the ETA lookup goes straight to Route Board
     // (cross-origin) so it doesn't hold up the expected-items fetch, and
     // a failure here should never block the receiving check itself.
     var etaPromise = fetchEta();
 
-    fetch('/api/expected/' + encodeURIComponent(storeName) + '?access=' + encodeURIComponent(storeAccessToken))
+    fetch('/api/expected/' + encodeURIComponent(storeName) + '?access=' + encodeURIComponent(storeAccessToken),{cache:'no-store',signal:AbortSignal.timeout(20000)})
       .then(function(r){ return r.json().then(function(data){ return { ok: r.ok, data: data }; }); })
       .then(function(result){
         var main = document.getElementById('mainContent');
         var dateRow = document.getElementById('dateOrderRow');
-        dateRow.innerHTML = '<span class="info-chip">' + todayStr + '</span>';
+        dateRow.innerHTML = '';
 
         if(!result.ok){
           var detail = '';
@@ -555,6 +593,7 @@
         }
         expected = result.data;
         initializeProgress();
+        dateRow.innerHTML='<span class="info-chip">'+escapeHtml(deliveryHeading(expected))+'</span>';
         dateRow.innerHTML += '<span class="info-chip order">Order' + (expected.orderName && expected.orderName.indexOf(',') !== -1 ? 's' : '') + ': ' + escapeHtml(expected.orderName || '—') + '</span>';
         dateRow.innerHTML += '<span class="info-chip crate">📦 ' + expected.crateCount + ' crate' + (expected.crateCount === 1 ? '' : 's') + ' expected</span>';
         render(); // Receiving can start immediately; ETA arrives independently.
@@ -597,7 +636,7 @@
         } else {
           document.getElementById('mainContent').innerHTML = '<div class="error-state">Could not reach the server: ' + escapeHtml(err.message) + '. Reload to try again.</div>';
         }
-      });
+      }).finally(function(){expectedLoadPending=false;});
   }
 
   function formatEtaTime(iso){
@@ -1131,7 +1170,8 @@
     var status = report.inventoryReconciliation || {};
     var retrying = reportIsRetrying(report);
     var good = ['corrected', 'conversion_posted', 'receipt_verified'].includes(status.status);
-    var html = '<div class="progress-notice">✓ Receiving report saved. Reference: '+escapeHtml(report.id)+'. Do not submit this delivery again.</div>';
+    var savedAt=Number.isFinite(Date.parse(report.submittedAt))?new Date(report.submittedAt).toLocaleString('en-US',{month:'long',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'America/New_York'}):'';
+    var html = '<div class="progress-notice">✓ Receiving report saved. '+(savedAt?'Submitted '+escapeHtml(savedAt)+' Eastern. ':'')+'Reference: '+escapeHtml(report.id)+'. Do not submit this delivery again.</div>';
     html += '<div class="result-banner ' + (report.hasErrors ? 'bad' : 'good') + '">'
       + (report.hasErrors ? '⚠ ' + report.errorPercent + '% receiving discrepancy recorded' : '✓ All items matched')
       + '</div>';
@@ -1280,6 +1320,10 @@
   window.addEventListener('pagehide',function(){saveProgress();});
 
   loadExpected();
+  setInterval(refreshCurrentDelivery,30000);
+  window.addEventListener('pageshow',refreshCurrentDelivery);
+  window.addEventListener('focus',refreshCurrentDelivery);
+  document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')refreshCurrentDelivery();});
 })();
 </script>
 

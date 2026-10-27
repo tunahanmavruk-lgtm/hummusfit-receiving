@@ -6,9 +6,9 @@ const root=path.resolve(__dirname,'..');
 const expected={orderId:'gid://shopify/Order/100',orderName:'#100',pickedBy:'Test',crateCount:1,items:[
   {sku:'WRAP',title:'Crispy Chicken Wrap',expectedQty:2,pickedQty:2,status:'picked'},
   {sku:'BOWL',title:'Zeus Bowl',scanCodes:['123456789099'],expectedQty:1,pickedQty:1,status:'picked'}]};
-async function fixture(browser,{failStorage=false,conflict=false}={}){
+async function fixture(browser,{failStorage=false,conflict=false,initialUnavailable=false}={}){
   const context=await browser.newContext({viewport:{width:390,height:844}}),page=await context.newPage();
-  const errors=[],posts=[];let report=null,first=true,catalogStatus='matched';
+  const errors=[],posts=[];let report=null,first=true,catalogStatus='matched',currentExpected=structuredClone(expected),expectedStatus=initialUnavailable?409:200;
   page.on('pageerror',e=>errors.push(e.message));
   if(failStorage)await page.addInitScript(()=>{Storage.prototype.setItem=function(){throw new Error('Storage is full');};});
   await page.clock.install();
@@ -16,9 +16,9 @@ async function fixture(browser,{failStorage=false,conflict=false}={}){
     const u=new URL(route.request().url()),p=u.pathname;
     if(u.hostname!=='receiving.test')return route.abort();
     if(p.startsWith('/receiving/'))return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(root,'public/receiving.html'),'utf8')});
-    if(p==='/api/expected/Holbrook')return route.fulfill({json:expected});
+    if(p==='/api/expected/Holbrook')return route.fulfill({status:expectedStatus,json:expectedStatus===200?currentExpected:{code:'current_delivery_unavailable',error:'Today’s delivery is not yet verified for receiving.'}});
     if(p==='/api/eta/Holbrook')return route.fulfill({json:{delivered:true,deliveredAt:'2026-10-14T13:00:00Z'}});
-    if(p==='/api/receiving-receipt/Holbrook')return route.fulfill({json:{ok:true,report}});
+    if(p==='/api/receiving-receipt/Holbrook')return route.fulfill({json:{ok:true,report:report&&report.orderId===u.searchParams.get('orderId')?report:null}});
     if(p==='/api/lookup-received-barcode')return route.fulfill({json:{status:catalogStatus,title:'Extra meal',sku:'EXTRA'}});
     if(p==='/api/submit-receiving-check'){
       const body=route.request().postDataJSON();posts.push(body);
@@ -35,8 +35,9 @@ async function fixture(browser,{failStorage=false,conflict=false}={}){
     return route.fulfill({status:404,body:''});
   });
   await page.goto('http://receiving.test/receiving/Holbrook?access=test-only');
-  await page.locator('#receivedByInput').waitFor();
-  return {page,context,posts,errors,setCatalogStatus(value){catalogStatus=value;}};
+  if(initialUnavailable)await page.getByText('Today’s delivery is not yet verified for receiving.',{exact:false}).waitFor();
+  else await page.locator('#receivedByInput').waitFor();
+  return {page,context,posts,errors,setCatalogStatus(value){catalogStatus=value;},setDelivery(value){currentExpected=value;expectedStatus=200;}};
 }
 async function counts(page){
   await page.locator('#receivedByInput').fill('Receiving Test');
@@ -88,7 +89,22 @@ async function run(engine,name){
     await page.clock.fastForward(16000);assert.equal(await page.locator('#finishBtn').count(),0);
     await page.reload();await page.getByText('Receiving report saved.',{exact:false}).waitFor();
     assert.equal(await page.evaluate(()=>window.HFReceivingProgress.create(localStorage,'Holbrook').list().length),0);
-    assert.equal(f.posts.length,2);assert.deepEqual(f.errors,[]);await f.context.close();
+    assert.equal(f.posts.length,2);assert.deepEqual(f.errors,[]);
+    const nextDelivery={...structuredClone(expected),orderId:'gid://shopify/Order/101',orderName:'#101',deliveryDate:'2026-10-27'};
+    f.setDelivery(nextDelivery);await page.evaluate(()=>window.dispatchEvent(new Event('pageshow')));
+    await page.locator('#receivedByInput').waitFor();assert.match(await page.locator('#dateOrderRow').textContent(),/#101/);
+    assert.equal(await page.locator('#receivedByInput').inputValue(),'');assert.equal(f.posts.length,2,'a new delivery never resubmits the saved receipt');
+    await f.context.close();
+    const active=await fixture(browser);await counts(active.page);active.setDelivery(nextDelivery);
+    await active.page.clock.fastForward(31000);await active.page.getByRole('button',{name:'Open current delivery'}).waitFor();
+    assert.equal(await active.page.locator('[data-manual-key="WRAP"]').textContent(),'0 / 2');assert.equal(active.posts.length,0);
+    await active.page.getByRole('button',{name:'Open current delivery'}).click();await active.page.locator('#receivedByInput').waitFor();
+    assert.match(await active.page.locator('#dateOrderRow').textContent(),/#101/);
+    assert.equal(await active.page.evaluate(()=>window.HFReceivingProgress.create(localStorage,'Holbrook').list().find(d=>d.expected.orderId.endsWith('/100')).scannedCounts.WRAP),0);
+    assert.deepEqual(active.errors,[]);await active.context.close();
+    const waiting=await fixture(browser,{initialUnavailable:true});assert.equal(await waiting.page.locator('#receivedByInput').count(),0);
+    waiting.setDelivery(nextDelivery);await waiting.page.clock.fastForward(31000);await waiting.page.locator('#receivedByInput').waitFor();
+    assert.match(await waiting.page.locator('#dateOrderRow').textContent(),/Delivery: Tuesday, October 27/);assert.equal(waiting.posts.length,0);assert.deepEqual(waiting.errors,[]);await waiting.context.close();
     const zero=await fixture(browser);
     await zero.page.locator('#receivedByInput').fill('Zero Count Test');
     assert.equal(await zero.page.locator('#finishBtn').isDisabled(),true);
@@ -136,7 +152,7 @@ async function run(engine,name){
     assert.equal(await unmatched.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'phone layout must not overflow horizontally');
     await unmatched.page.setViewportSize({width:390,height:844});await unmatched.page.screenshot({path:'/tmp/hf-receiving-search-'+name.toLowerCase()+'.png',fullPage:true});
     await unmatched.context.close();
-    console.log(name+': item search, hidden unresolved items, strict quantities, blocked text, unverified extras and retry, refresh, zero counts, extra barcodes, lost response, frozen retry, same payload, completed screen, storage failure and conflict passed');
+    console.log(name+': completed-page rollover, active-draft preservation, waiting-to-ready refresh, item search, hidden unresolved items, strict quantities, blocked text, unverified extras and retry, refresh, zero counts, extra barcodes, lost response, frozen retry, same payload, completed screen, storage failure and conflict passed');
   } finally {await browser.close();}
 }
 (async()=>{await run(chromium,'Chromium');await run(webkit,'WebKit');})().catch(e=>{console.error(e);process.exitCode=1;});

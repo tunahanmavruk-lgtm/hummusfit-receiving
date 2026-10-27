@@ -215,6 +215,7 @@ app.get("/api/qr/:store", requireReportsManager, async (req, res) => {
 // is the ground truth the receiving employee's scans get checked
 // against, not just the original order.
 app.get("/api/expected/:store", requireStoreAccess, async (req, res) => {
+  res.set("Cache-Control", "private, no-store");
   const store = req.params.store;
   try {
     const r = await fetch(`${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`);
@@ -716,7 +717,7 @@ const receivingWorker=createReconciliationWorker({
 });
 app.get('/api/receiving-automation-health',(_req,res)=>res.json({version:AUTOMATION_RELEASE,stores:14,durableQueue:true,
   receivingProgress:'draft-retry-2026-10-14-v1',idempotentSubmission:true,
-  structuredReceipts:'verified-delivery-2026-10-17-v1',deliveryItemSearch:true}));
+  structuredReceipts:'verified-delivery-2026-10-17-v1',deliveryItemSearch:true,currentDeliveryRefresh:"2026-10-27-v1"}));
 receivingWorker.start();
 
 app.listen(PORT, "0.0.0.0", () => {
