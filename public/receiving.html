@@ -690,6 +690,12 @@
         + '<div class="eta-sub">' + escapeHtml(etaInfo.routeName || '') + sched + '</div>'
         + '</div></div>';
     }
+    if(etaInfo.vanPassedLocation){
+      return '<div class="eta-card pending"><span class="eta-dot"></span><div>'
+        + '<div class="eta-label">Van has left this location</div>'
+        + '<div class="eta-sub">If your order has not arrived, contact Hummus Fit logistics. Delivery has not been confirmed in the app.</div>'
+        + '</div></div>';
+    }
     if(!etaInfo.eta){
       return '<div class="eta-card pending"><span class="eta-dot"></span><div>'
         + '<div class="eta-label">On the route — arrival time pending</div>'
