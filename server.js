@@ -154,7 +154,7 @@ const ROUTE_BOARD_URL =
 const STORES = [
   "Lindenhurst", "Lynbrook", "Island Park", "Bellmore", "Islip",
   "Farmingdale", "Deer Park", "Woodbury", "Huntington", "Ozone Park",
-  "Hicksville", "Selden", "Miller Place", "Lake Grove", "Holbrook", "Ronkonkoma",
+  "Hicksville", "Total Nutrition Syosset", "Selden", "Miller Place", "Lake Grove", "Holbrook", "Ronkonkoma",
 ];
 
 // The B2B / out-of-state customer list — same idea as STORES above,
@@ -168,7 +168,7 @@ const OUT_OF_STATE_STORES = [
   "PWRBLD Philadelphia", "Ares Philadelphia", "Ares Hamilton",
   "Wyomissing", "Bethlehem", "Meriden", "Orange", "Shelton", "Fairfield",
   "New Castle", "Ares Sewell", "King of Gains", "Ares Mt Laurel",
-  "PWRBLD KOP", "PWRBLD Warrington",
+  "PWRBLD KOP", "Powerhouse East Norriton", "PWRBLD Warrington",
 ];
 const ALL_STORES = STORES.concat(OUT_OF_STATE_STORES);
 
