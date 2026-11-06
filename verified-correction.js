@@ -22,10 +22,45 @@ function correctionKey(report, sku, kind='food') {
   ])).digest('hex');
 }
 
+function verifiedShipmentCorrection(report, sku, {basis,node}, groupId) {
+  const matches=report.items.map((item,index)=>({...item,index})).filter(item=>item.sku===sku);
+  const item=matches[0];
+  const locationId='gid://shopify/Location/'+LOCATIONS[report.store];
+  const credits=basis?.credits;
+  if (matches.length!==1 || item.receivingCategory!=='food' || !report.foodShipmentKey ||
+      basis?.shipmentKey!==report.foodShipmentKey || basis.locationId!==locationId ||
+      !/^gid:\/\/shopify\/LineItem\/\d+$/.test(basis.lineItemId) ||
+      !/^gid:\/\/shopify\/InventoryItem\/\d+$/.test(basis.inventoryItemId) ||
+      basis.ordered!==item.orderedQty || basis.received!==item.actuallyReceived ||
+      basis.shipped!==item.expectedFromPicking || basis.credited!==basis.shipped ||
+      basis.delta!==item.actuallyReceived-basis.credited || !Number.isSafeInteger(basis.delta) ||
+      !Array.isArray(credits) || credits.some(c=>!/^gid:\/\/shopify\/InventoryAdjustmentGroup\/\d+$/.test(c.adjustmentId) ||
+        !/^gid:\/\/shopify\/Fulfillment\/\d+$/.test(c.fulfillmentId) || !Number.isSafeInteger(c.quantity) || c.quantity<1) ||
+      new Set(credits.map(c=>c.adjustmentId)).size!==credits.length ||
+      new Set(credits.map(c=>c.fulfillmentId)).size!==credits.length ||
+      credits.reduce((sum,c)=>sum+c.quantity,0)!==basis.credited) {
+    throw new Error('Exact verified store credit for this shipment is required');
+  }
+  const correction={status:basis.delta===0?'matched':'posted',shopifyVerified:true,source:AGENT_LABEL,
+    reportId:report.id,store:report.store,orderId:report.orderId,discrepancyKey:`item:${item.index}`,
+    sku,delta:basis.delta,locationId,inventoryItemId:basis.inventoryItemId,foodShipmentBasis:basis};
+  if (basis.delta===0 && !node && !groupId) return correction;
+  const changes=(node?.changes||[]).filter(c=>c.name==='available');
+  if (basis.delta===0 || !/^gid:\/\/shopify\/InventoryAdjustmentGroup\/\d+$/.test(groupId||'') ||
+      node?.id!==groupId || node.referenceDocumentUri!==`gid://agent-hazar-receiving/FoodCorrection/${correctionKey(report,sku)}` ||
+      !Number.isFinite(Date.parse(node.createdAt)) || Date.parse(node.createdAt)<Math.floor(Date.parse(report.submittedAt)/1000)*1000 ||
+      changes.length!==1 || changes[0].delta!==basis.delta || changes[0].item?.id!==basis.inventoryItemId ||
+      changes[0].item?.sku!==sku || changes[0].location?.id!==locationId) {
+    throw new Error('Shopify correction does not match this shipment and store credit');
+  }
+  return {...correction,adjustmentId:node.id,postedAt:node.createdAt,referenceDocumentUri:node.referenceDocumentUri};
+}
+
 // This path imports proof only; it cannot adjust stock. A manager cannot
 // close a report by supplying a status/quantity. Shopify is read independently.
 function verifiedCorrection(report, sku, group, order, kind='food', variant=null) {
   if(!['food','zero_case','extra'].includes(kind) || report?.supersededBy) throw new Error('Current receipt correction kind required');
+  if (kind==='food' && report.foodShipmentKey) throw new Error('Verified shipment credit proof is required for this food correction');
   const locationId = LOCATIONS[report?.store] && `gid://shopify/Location/${LOCATIONS[report.store]}`;
   const submitted = Date.parse(report?.submittedAt);
   if (!locationId || !Number.isFinite(submitted) || submitted < Date.parse('2026-10-06T04:00:00Z') ||
@@ -118,4 +153,4 @@ async function readCorrectionProof(groupId, orderId, variantId) {
   if (!result.node || !result.order) throw new Error('Shopify could not verify correction proof');
   return result;
 }
-module.exports={LOCATIONS,PROOF_QUERY,correctionKey,verifiedCorrection,mergeVerifiedCorrection,readCorrectionProof};
+module.exports={LOCATIONS,PROOF_QUERY,correctionKey,verifiedCorrection,verifiedShipmentCorrection,mergeVerifiedCorrection,readCorrectionProof};

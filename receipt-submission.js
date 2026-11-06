@@ -16,7 +16,8 @@ const sorted = rows => rows.sort((a, b) => JSON.stringify(a).localeCompare(JSON.
 function receiptFingerprint(report) {
   return digest([report.store, canonicalOrder(report.orderId),
     sorted(report.items.map(i => [i.sku || i.title, i.orderedQty, i.expectedFromPicking, i.actuallyReceived])),
-    sorted((report.extraItems || []).map(i => [i.code, i.qty]))]);
+    sorted((report.extraItems || []).map(i => [i.code, i.qty])),
+    ...(report.foodShipmentKey?[report.foodShipmentKey]:[])]);
 }
 
 function submissionIdentity(body) {
@@ -42,7 +43,7 @@ function submissionIdentity(body) {
     return { sku: i.sku, title: i.title, orderedQty: Number(i.expectedQty), expectedFromPicking: i.pickedQty, actuallyReceived: qty };
   });
   if (Object.keys(body.scannedCounts).some(k => !keys.has(k))) throw new Error('Some saved counts do not belong to this delivery. Contact logistics; do not discard your draft.');
-  const fingerprint = receiptFingerprint({ store: body.store, orderId: body.orderId, items,
+  const fingerprint = receiptFingerprint({ store: body.store, orderId: body.orderId, items,foodShipmentKey:body.foodShipmentKey,
     // Old saved receipts can still acknowledge identical retries. Every NEW
     // receipt passes strict cleanExtraLines and catalog verification in server.js.
     extraItems: cleanExtraLines(body.extraScans, body.extraDetails, {legacyFingerprint:true}) });

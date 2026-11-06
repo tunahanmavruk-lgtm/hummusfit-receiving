@@ -1,4 +1,5 @@
 const { canonicalOrder } = require('./receipt-submission');
+const { categoryForItem } = require('./receiving-policy');
 
 // Resolve order identity and product metadata from Route Board, never from a
 // typed product description or client-supplied inventory policy.
@@ -6,6 +7,9 @@ function verifiedDelivery(body, delivery) {
   const changed = () => new Error('Delivery details could not be verified or have changed. Your draft is preserved. Contact logistics before submitting.');
   if (!delivery || canonicalOrder(delivery.orderId) !== canonicalOrder(body.orderId) ||
       !Array.isArray(delivery.items) || delivery.items.length !== body.expectedItems.length) throw changed();
+  if ((delivery.foodShipmentKey || null) !== (body.foodShipmentKey || null) ||
+      (delivery.foodShipmentKey && (!/^[a-f0-9]{64}$/.test(delivery.foodShipmentKey) ||
+        !Number.isFinite(Date.parse(delivery.shipmentVerifiedAt))))) throw changed();
   const key = i => i.sku || i.title;
   const submitted = new Map(body.expectedItems.map(i => [key(i), i]));
   const seen = new Set();
@@ -16,7 +20,8 @@ function verifiedDelivery(body, delivery) {
         !Number.isSafeInteger(item.pickedQty) || item.pickedQty < 0 ||
         !Number.isSafeInteger(Number(item.expectedQty)) || Number(item.expectedQty) < 0) throw changed();
     seen.add(id);
-    if (item.status !== 'missing' && !Object.hasOwn(body.scannedCounts, id)) {
+    const explicitFoodCount = delivery.foodShipmentKey && categoryForItem(item)==='food';
+    if ((item.status !== 'missing' || explicitFoodCount) && !Object.hasOwn(body.scannedCounts, id)) {
       throw new Error('Confirm a whole-number received count for every delivery item, including zero. Your draft has not been submitted.');
     }
   }

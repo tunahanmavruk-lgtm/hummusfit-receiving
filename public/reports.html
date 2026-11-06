@@ -136,7 +136,9 @@
   function render(reports){
     var el = document.getElementById('content');
     var filtered = currentFilter === 'errors' ? reports.filter(function(r){ return r.hasErrors; })
-      : currentFilter === 'inventory' ? reports.filter(function(r){ return r.inventoryReconciliation && ['needs_review','partially_corrected'].includes(r.inventoryReconciliation.status); })
+      : currentFilter === 'inventory' ? reports.filter(function(r){
+        return (r.warehouseReview||[]).length || (r.inventoryReconciliation && ['needs_review','partially_corrected'].includes(r.inventoryReconciliation.status));
+      })
       : reports;
 
     if(filtered.length === 0){
@@ -191,6 +193,10 @@
         return '<div class="inventory-line">' + esc(result.sku || 'POS posting') + ': '
           + esc(result.error || result.status || 'Review required') + '</div>';
       }).join('');
+      var warehouseLines=(r.warehouseReview||[]).map(function(line){
+        return '<div class="inventory-line"><strong>Warehouse review</strong> '+esc(line.title)+
+          ' · '+esc(line.quantity)+' short at receiving. '+esc(line.reason)+'</div>';
+      }).join('');
 
       return '<div class="report-card">'
         + '<div class="report-top">'
@@ -203,7 +209,7 @@
         + '<div class="inventory-state ' + esc(inventory.status) + '"><strong>' + esc(inventory.label) + '</strong>'
         + esc(inventory.detail)
         + (inventory.status === 'corrected' && inventory.correctedAt ? ' ' + esc(easternTime(inventory.correctedAt)) + '.' : '')
-        + postedLines + blockedLines
+        + postedLines + blockedLines + warehouseLines
         + (canManageReports && blockedResults.length && r.id ? '<button class="retry-retail" type="button" data-report-id="' + esc(r.id) + '">Retry verified retail posting</button>' : '')
         + '</div>'
         + '</div>';

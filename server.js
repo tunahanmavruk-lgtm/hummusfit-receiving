@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const QRCode = require("qrcode");
 const { freshReceivingPath, currentReceivingEntry } = require('./receiving-entry');
 const { buildReceivingPolicy, receiptCountKey } = require("./receiving-policy");
-const { reconciliationStatus, POS_STORES } = require("./reconciliation-status");
+const { reconciliationStatus, warehouseReviewLines, POS_STORES } = require("./reconciliation-status");
 const { cleanExtraLines, verifyExtraLines } = require("./receiving-extra-evidence");
 const { retryRetailLines, mergeRetailPostings } = require("./retail-conversion-retry");
 const { verifiedCorrection, mergeVerifiedCorrection, readCorrectionProof } = require("./verified-correction");
@@ -13,6 +13,13 @@ const { RELEASE: AUTOMATION_RELEASE, queueReport, retryReport, createReconciliat
 const { orderIds, canonicalOrder, submissionIdentity, findSubmission, createSubmissionLock } = require('./receipt-submission');
 const withSubmissionLock = createSubmissionLock();
 const { verifiedDelivery, requireVerifiedExtras } = require('./structured-receipt');
+const FOOD_SHIPMENT_VERSION = 'verified-food-shipment-v1';
+const receivingShipmentHeaders = {'X-HF-Receiving-Food-Shipment':FOOD_SHIPMENT_VERSION};
+const foodShipmentPilotArmed = process.env.FOOD_SHIPMENT_PILOT === 'Huntington';
+
+function supportsFoodShipment(store, delivery) {
+  return !foodShipmentPilotArmed || store!=='Huntington' || delivery?.foodShipmentVersion===FOOD_SHIPMENT_VERSION;
+}
 
 const app = express();
 app.use(express.json());
@@ -219,7 +226,7 @@ app.get("/api/expected/:store", requireStoreAccess, async (req, res) => {
   res.set("Cache-Control", "private, no-store");
   const store = req.params.store;
   try {
-    const r = await fetch(`${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`);
+    const r = await fetch(`${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`,{headers:receivingShipmentHeaders});
     const rawText = await r.text();
     let data;
     try {
@@ -237,6 +244,9 @@ app.get("/api/expected/:store", requireStoreAccess, async (req, res) => {
       });
     }
     if (!r.ok) return res.status(r.status).json(data);
+    if (!supportsFoodShipment(store,data)) return res.status(503).json({
+      code:'current_delivery_unavailable',error:'Huntington receiving is waiting for the compatible shipping service.'
+    });
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: "Could not reach Route Board: " + err.message });
@@ -336,7 +346,7 @@ async function submitReceipt(req, res) {
   if (!store || !expectedItems || !scannedCounts) {
     return res.status(400).json({ error: "store, expectedItems, and scannedCounts are required" });
   }
-  let identity;
+  let identity, delivery;
   if (POS_STORES.has(store)) {
     try { identity = submissionIdentity(req.body); }
     catch (e) { return res.status(400).json({error:e.message,notSaved:true}); }
@@ -347,11 +357,13 @@ async function submitReceipt(req, res) {
         reportId:previous.report?.id});
       return res.json({ok:true,replayed:true,report:{...previous.report,inventoryReconciliation:reconciliationStatus(previous.report)}});
     }
-    let delivery;
     try {
-      const upstream = await fetch(`${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`, {signal:AbortSignal.timeout(10000)});
+      const upstream = await fetch(`${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`, {
+        headers:receivingShipmentHeaders,signal:AbortSignal.timeout(10000)
+      });
       if (!upstream.ok) throw new Error('Delivery verification unavailable');
       delivery = await upstream.json();
+      if (!supportsFoodShipment(store,delivery)) throw new Error('Compatible shipping service required');
     } catch {
       return res.status(400).json({notSaved:true,error:'Delivery verification is temporarily unavailable. Your draft is preserved; try again when logistics is available.'});
     }
@@ -437,6 +449,7 @@ async function submitReceipt(req, res) {
     errorPercent,
     posInventoryWritesEnabled: false,
     posInventoryResults: [],
+    ...(delivery?.foodShipmentKey ? {foodShipmentKey:delivery.foodShipmentKey,shipmentVerifiedAt:delivery.shipmentVerifiedAt} : {}),
     // Only server-verified Shopify adjustment groups may populate this.
     // A discrepancy is never marked solved merely because a scan was saved.
     inventoryCorrections: [],
@@ -501,6 +514,7 @@ app.get("/api/reports", requireReportsManager, (req, res) => {
   const reports = loadReports();
   res.json({ reports: reports.slice().reverse().map((report) => ({
     ...report, inventoryReconciliation: reconciliationStatus(report),
+    warehouseReview: warehouseReviewLines(report),
   })) });
 });
 
@@ -730,6 +744,9 @@ const receivingWorker=createReconciliationWorker({
   },
 });
 app.get('/api/receiving-automation-health',(_req,res)=>res.json({version:AUTOMATION_RELEASE,stores:14,durableQueue:true,
+  foodShipmentVersion:FOOD_SHIPMENT_VERSION,
+  foodShipmentReady:foodShipmentPilotArmed && !!HF_LOGISTICS_HANDOFF_SECRET && process.env.RECEIVING_AUTOMATION_ENABLED!=='false' &&
+    (!process.env.RAILWAY_ENVIRONMENT_ID || fs.existsSync('/data')),
   receivingProgress:'draft-retry-2026-10-14-v1',idempotentSubmission:true,
   structuredReceipts:'verified-delivery-2026-10-17-v1',deliveryItemSearch:true,currentDeliveryRefresh:"2026-10-27-v1"}));
 receivingWorker.start();

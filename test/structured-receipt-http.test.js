@@ -15,13 +15,13 @@ test('server rejects unstructured, fabricated and unverified receipts before sav
   let catalogStatus='matched',catalogSku='EXTRA-123',unavailable=false,writes=0;
   const mock=http.createServer(async(req,res)=>{
     res.setHeader('Content-Type','application/json');
-    if(req.url==='/api/picked-summary/Holbrook') {res.statusCode=unavailable?503:200;return res.end(JSON.stringify(delivery));}
+    if(['/api/picked-summary/Holbrook','/api/picked-summary/Huntington'].includes(req.url)) {res.statusCode=unavailable?503:200;return res.end(JSON.stringify(delivery));}
     if(req.url==='/api/receiving-barcode-lookup')return res.end(JSON.stringify({status:catalogStatus,productStatus:'ACTIVE',variantId:'gid://shopify/ProductVariant/9',sku:catalogSku,title:'Server verified extra'}));
     writes++;res.statusCode=500;res.end('{}');
   });
   await new Promise(r=>mock.listen(0,'127.0.0.1',r));t.after(()=>mock.close());
   const sock=http.createServer();await new Promise(r=>sock.listen(0,'127.0.0.1',r));const port=sock.address().port;await new Promise(r=>sock.close(r));
-  const proc=spawn(process.execPath,['server.js'],{cwd:tmp,env:{PATH:process.env.PATH,PORT:String(port),STORE_TRACKING_SECRET:'test-only',HF_LOGISTICS_HANDOFF_SECRET:'test-only',RECEIVING_AUTOMATION_ENABLED:'false',ROUTE_BOARD_URL:`http://127.0.0.1:${mock.address().port}`},stdio:['ignore','pipe','pipe']});
+  const proc=spawn(process.execPath,['server.js'],{cwd:tmp,env:{PATH:process.env.PATH,PORT:String(port),STORE_TRACKING_SECRET:'test-only',HF_LOGISTICS_HANDOFF_SECRET:'test-only',RECEIVING_AUTOMATION_ENABLED:'false',FOOD_SHIPMENT_PILOT:'Huntington',ROUTE_BOARD_URL:`http://127.0.0.1:${mock.address().port}`},stdio:['ignore','pipe','pipe']});
   t.after(()=>proc.kill());await new Promise((resolve,reject)=>{proc.stdout.once('data',resolve);proc.once('error',reject);});
   const p=Buffer.from(JSON.stringify({v:1,scope:'receiving.store',store:'Holbrook'})).toString('base64url');
   const access=p+'.'+crypto.createHmac('sha256','test-only').update(p).digest('base64url');
@@ -57,4 +57,30 @@ test('server rejects unstructured, fabricated and unverified receipts before sav
   assert.equal(saved.report.extraItems[0].sku,'EXTRA-123');assert.equal(saved.report.extraItems[0].catalogVerified,true);
   unavailable=true;const replay=await post(good);assert.equal(replay.status,200);assert.equal((await replay.json()).report.id,saved.report.id);
   assert.equal(JSON.parse(fs.readFileSync(path.join(tmp,'reports.json'))).length,1);assert.equal(writes,0);
+
+  unavailable=false;
+  delivery.orderId='gid://shopify/Order/124';
+  delivery.orderName='#124';
+  delivery.foodShipmentKey='a'.repeat(64);
+  delivery.shipmentVerifiedAt=new Date().toISOString();
+  Object.assign(delivery.items[0],{pickedQty:0,status:'missing'});
+  const pilot=body();
+  pilot.store='Huntington';
+  const pilotPayload=Buffer.from(JSON.stringify({v:1,scope:'receiving.store',store:pilot.store})).toString('base64url');
+  pilot.access=pilotPayload+'.'+crypto.createHmac('sha256','test-only').update(pilotPayload).digest('base64url');
+  assert.equal((await post(pilot)).status,400,'a downgraded Route Board cannot accept new Huntington receipts');
+  delivery.foodShipmentVersion='verified-food-shipment-v1';
+  assert.equal((await post(pilot)).status,400,'an old client cannot submit an unscoped shipment');
+  pilot.foodShipmentKey=delivery.foodShipmentKey;
+  delete pilot.scannedCounts.WRAP;
+  assert.equal((await post(pilot)).status,400,'an omitted count cannot become an explicit zero');
+  pilot.scannedCounts.WRAP=0;
+  const accepted=await post(pilot);
+  assert.equal(accepted.status,200);
+  const savedPilot=(await accepted.json()).report;
+  assert.equal(savedPilot.foodShipmentKey,delivery.foodShipmentKey);
+  assert.equal(savedPilot.shipmentVerifiedAt,delivery.shipmentVerifiedAt);
+  assert.equal(savedPilot.items[0].actuallyReceived,0);
+  assert.equal((await (await post(pilot)).json()).report.id,savedPilot.id);
+  assert.equal(writes,0);
 });

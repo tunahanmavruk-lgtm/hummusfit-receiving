@@ -13,7 +13,7 @@
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script src="/receiving-policy.js"></script>
 <script src="/receiving-barcode.js"></script>
-<script src="/receiving-progress.js?v=20261027-2"></script>
+<script src="/receiving-progress.js?v=20261106-1"></script>
 <style>
   :root{
     --bg:#FFFFFF;
@@ -520,6 +520,9 @@
   }
 
   function itemKey(item){ return item.sku || item.title; }
+  function needsPhysicalCount(item){
+    return item.status !== 'missing' || Boolean(expected.foodShipmentKey && categoryForItem(item)==='food');
+  }
   function categoryForItem(item){
     return window.HFReceivingPolicy ? window.HFReceivingPolicy.categoryForItem(item) : 'food';
   }
@@ -814,7 +817,7 @@
     // the picker's side. Everything else has to be explicitly resolved
     // (confirmed correct, or reported with a real count) before Finish
     // unlocks, so a blank-scroll-through can't slip past as "all good."
-    var requiredKeys = expected.items.filter(function(it){ return it.status !== 'missing'; }).map(itemKey);
+    var requiredKeys = expected.items.filter(needsPhysicalCount).map(itemKey);
     var unresolvedCount = requiredKeys.filter(function(k){ return !resolvedKeys[k]; }).length;
 
     html += '<div class="delivery-search"><label for="deliverySearch">Search this delivery</label>'
@@ -845,7 +848,7 @@
       // in the crate — showing it as a plain "0 / 0" would look
       // identical to any other untouched item and easily get missed.
       // Flag it clearly instead so it's obvious why nothing's expected.
-      if(item.status === 'missing'){
+      if(!needsPhysicalCount(item)){
         html += '<div class="item-row missing-row"'+itemSearchAttribute(item)+'>'
           + thumb
           + '<span class="item-title">' + escapeHtml(item.title) + '</span>'
@@ -1227,7 +1230,7 @@
     // unresolved, but this is the actual gate that decides whether a
     // submission is allowed through, so it has to hold even if the
     // button's disabled state is ever bypassed.
-    var requiredKeys = expected.items.filter(function(it){ return it.status !== 'missing'; }).map(itemKey);
+    var requiredKeys = expected.items.filter(needsPhysicalCount).map(itemKey);
     var stillUnresolved = requiredKeys.filter(function(k){ return !resolvedKeys[k]; });
     if(stillUnresolved.length > 0){
       alert('Confirm or report every item before finishing — ' + stillUnresolved.length + ' item' + (stillUnresolved.length === 1 ? ' still needs' : 's still need') + ' a check.');
@@ -1256,6 +1259,7 @@
         access: storeAccessToken,
         store: storeName,
         orderId: expected.orderId,
+        foodShipmentKey: expected.foodShipmentKey,
         orderName: expected.orderName,
         pickedBy: expected.pickedBy,
         receivedBy: receivedBy,
@@ -1286,13 +1290,14 @@
     if(pendingSubmission || submissionInFlight || finishedReport || receiptConflict || draftMismatch) return;
     if(progressEnabled && blockedExtraCodes().length){submissionError='Verify every wrong/extra product code before submitting. Your draft is saved.';render();return;}
     if(pendingLookupCount){submissionError='Wait for barcode lookups to finish.';render();return;}
-    if(!receivedByValue.trim() || expected.items.some(function(i){return i.status!=='missing'&&!resolvedKeys[itemKey(i)];})){
+    if(!receivedByValue.trim() || expected.items.some(function(i){return needsPhysicalCount(i)&&!resolvedKeys[itemKey(i)];})){
       confirmFinish=false;submissionError='Enter your name and confirm every item, including zeros.';render();return;
     }
     var bytes=new Uint8Array(16);window.crypto.getRandomValues(bytes);
     var id=Array.from(bytes).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
     pendingSubmission=JSON.parse(JSON.stringify({submissionId:id,store:storeName,
       orderId:expected.orderId,orderName:expected.orderName,pickedBy:expected.pickedBy,
+      foodShipmentKey:expected.foodShipmentKey,
       receivedBy:receivedByValue.trim(),expectedItems:expected.items,scannedCounts:scannedCounts,
       extraScans:extraScans,extraDetails:extraDetails}));
     confirmFinish=false;
