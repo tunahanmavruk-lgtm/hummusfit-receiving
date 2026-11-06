@@ -9,6 +9,7 @@ const { reconciliationStatus, warehouseReviewLines, POS_STORES } = require("./re
 const { cleanExtraLines, verifyExtraLines } = require("./receiving-extra-evidence");
 const { retryRetailLines, mergeRetailPostings } = require("./retail-conversion-retry");
 const { verifiedCorrection, mergeVerifiedCorrection, readCorrectionProof } = require("./verified-correction");
+const { CASES: MANUAL_RETAIL_CASES, verifiedManualRetail, mergeManualRetail } = require('./verified-manual-retail');
 const { RELEASE: AUTOMATION_RELEASE, queueReport, retryReport, createReconciliationWorker } = require('./automatic-reconciliation');
 const { orderIds, canonicalOrder, submissionIdentity, findSubmission, createSubmissionLock } = require('./receipt-submission');
 const withSubmissionLock = createSubmissionLock();
@@ -581,6 +582,32 @@ app.post("/api/retry-retail-conversion", requireReportsManager, async (req, res)
     res.json({ ok: true, report: { ...reports[index], inventoryReconciliation: reconciliationStatus(reports[index]) } });
   } catch (error) {
     res.status(502).json({ error: `POS conversion retry failed: ${error.message}` });
+  }
+});
+
+// Import the two independently verified Shopify groups from the confirmed
+// legacy-to-active Sour Drops case migration. This only records proof; it
+// never performs another inventory adjustment or replays the conversion.
+app.post('/api/import-verified-manual-retail', requireReportsManager, async (req, res) => {
+  const {reportId, sku, adjustmentId} = req.body || {};
+  if (!MANUAL_RETAIL_CASES[sku] || adjustmentId !== MANUAL_RETAIL_CASES[sku].groupId) {
+    return res.status(400).json({error:'Exact approved retail conversion group required'});
+  }
+  const report = loadReports().find(r => r.id === reportId);
+  if (!report) return res.status(404).json({error:'Saved report not found'});
+  try {
+    const proof = await readCorrectionProof(adjustmentId, report.orderId);
+    const posting = verifiedManualRetail(report, sku, proof.node, proof.order);
+    const reports = loadReports();
+    const current = reports.find(r => r.id === reportId && r.submittedAt === report.submittedAt && r.orderId === report.orderId);
+    if (!current || JSON.stringify(current.items.find(i => i.sku === sku)) !== JSON.stringify(report.items.find(i => i.sku === sku))) {
+      throw new Error('Saved retail line changed during verification');
+    }
+    mergeManualRetail(current, posting);
+    saveReports(reports);
+    return res.json({ok:true,report:{...current,inventoryReconciliation:reconciliationStatus(current)}});
+  } catch (error) {
+    return res.status(409).json({error:error.message});
   }
 });
 
