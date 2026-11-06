@@ -1,6 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {queueReport,retryReport,createReconciliationWorker}=require('../automatic-reconciliation');
 const {correctionKey,LOCATIONS}=require('../verified-correction');
+const {reconciliationStatus,warehouseReviewLines}=require('../reconciliation-status');
 const clone=x=>JSON.parse(JSON.stringify(x));
 function fixture(store='Holbrook') {
   return queueReport({id:store+'::1',store,orderId:'gid://shopify/Order/1',orderName:'#1',submittedAt:new Date().toISOString(),
@@ -71,4 +72,83 @@ test('combined receipt rejects proof for an unrelated order',async()=>{
 test('overlapping combined and standalone reports require review before requests',async()=>{
   const f=setup();const report=fixture();report.id+='second';report.orderId+=',gid://shopify/Order/2';report.orderName+=', #2';f.add(report);
   await f.worker.tick();assert.equal(f.calls(),0);assert.ok(f.get().every(r=>r.automation.status==='requires_review'));
+});
+
+for (const [shipped,received,delta] of [[10,9,-1],[9,9,0],[9,8,-1],[9,0,-9],[9,10,1]]) {
+  test(`Huntington records ${shipped} credited and ${received} received with signed delta ${delta}`,async()=>{
+    const r=fixture('Huntington');
+    r.foodShipmentKey='a'.repeat(64);
+    Object.assign(r.items[0],{orderedQty:10,expectedFromPicking:shipped,actuallyReceived:received,
+      orderDiff:received-10,diff:received-shipped});
+    const f=setup(r);
+    const locationId='gid://shopify/Location/'+LOCATIONS.Huntington;
+    const inventoryItemId='gid://shopify/InventoryItem/4';
+    const groupId=delta?'gid://shopify/InventoryAdjustmentGroup/10':null;
+    const basis={shipmentKey:r.foodShipmentKey,ordered:10,received,shipped,credited:shipped,delta,
+      credits:[{fulfillmentId:'gid://shopify/Fulfillment/1',adjustmentId:'gid://shopify/InventoryAdjustmentGroup/9',quantity:shipped}],
+      inventoryItemId,locationId,lineItemId:'gid://shopify/LineItem/2'};
+    const node=delta?{id:groupId,createdAt:r.submittedAt,
+      referenceDocumentUri:`gid://agent-hazar-receiving/FoodCorrection/${correctionKey(r,'WRAP')}`,
+      changes:[{name:'available',delta,item:{id:inventoryItemId,sku:'WRAP'},location:{id:locationId}}]}:null;
+    const requests=[];
+    f.deps.request=async (endpoint,body)=>{
+      requests.push(endpoint);
+      assert.equal(body.report.foodShipmentKey,r.foodShipmentKey);
+      if(endpoint==='/api/verified-food-receiving-correction') {
+        return {results:[{status:delta?'posted':'matched',kind:'food',sku:'WRAP',orderId:r.orderId,adjustmentId:groupId}]};
+      }
+      assert.equal(endpoint,'/api/verified-food-receiving-proof');
+      assert.equal(body.groupId,groupId);
+      return {basis,node};
+    };
+    const worker=createReconciliationWorker(f.deps);
+    await worker.tick();
+    await worker.tick();
+    const saved=f.get()[0], status=reconciliationStatus(saved);
+    assert.equal(saved.automation.status,'complete');
+    assert.equal(requests.length,2);
+    assert.equal(status.pendingCount,0);
+    assert.equal(status.correctedCount,delta?1:0);
+    assert.equal(status.backorderCount,shipped<10?1:0);
+    assert.equal(warehouseReviewLines(saved)[0]?.quantity,received<shipped?shipped-received:undefined);
+  });
+}
+
+test('pilot requires explicit zero even when food was missing from picking, and binds the shipment to retry identity',()=>{
+  const {verifiedDelivery}=require('../structured-receipt');
+  const {submissionIdentity,findSubmission}=require('../receipt-submission');
+  const orderId='gid://shopify/Order/1';
+  const foodShipmentKey='a'.repeat(64);
+  const item={title:'Wrap',sku:'WRAP',status:'missing',expectedQty:10,pickedQty:0};
+  const expected={orderId,foodShipmentKey,shipmentVerifiedAt:new Date().toISOString(),items:[item]};
+  const body={store:'Huntington',orderId,foodShipmentKey,expectedItems:[item],scannedCounts:{},submissionId:'test-submission-123'};
+  assert.throws(()=>verifiedDelivery(body,expected),/including zero/);
+  body.scannedCounts.WRAP=0;
+  assert.equal(verifiedDelivery(body,expected),expected);
+  const identity=submissionIdentity(body);
+  const saved={store:body.store,orderId,foodShipmentKey,submissionId:body.submissionId,submissionFingerprint:identity.fingerprint};
+  assert.equal(findSubmission([saved],body.store,identity).replayed,true);
+  const changed=submissionIdentity({...body,foodShipmentKey:'b'.repeat(64)});
+  assert.equal(findSubmission([saved],body.store,changed).conflict,true);
+});
+
+test('November 6 exception reports keep their prior posting evidence and require explicit manager retry',async()=>{
+  const cases=[
+    ['Ronkonkoma','#805498','Waiting for exact delivered-line store credit proof'],
+    ['Lake Grove','#805433','Approved Shopify variant must have the exact unique SKU MF-8670041-CS'],
+    ['Island Park','#805093','Waiting for exact delivered-line store credit proof'],
+    ['Islip','#804967','Case SKU needs an approved case-to-POS-unit mapping'],
+    ['Selden','#805274','Case SKU needs an approved case-to-POS-unit mapping'],
+  ];
+  for(const [store,orderName,error] of cases) {
+    const report=fixture(store);
+    report.orderName=orderName;
+    report.automation.status='requires_review';
+    report.automation.results=[{kind:'retail',status:'requires_review',error}];
+    report.posInventoryResults=[{sku:'CASE-X',status:'posted',units:12,adjustmentId:'gid://shopify/InventoryAdjustmentGroup/9'}];
+    const f=setup(report);
+    await f.worker.tick();
+    assert.deepEqual(f.get(),[report]);
+    assert.equal(f.calls(),0);
+  }
 });

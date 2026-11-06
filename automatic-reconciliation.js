@@ -1,5 +1,5 @@
 const { POS_STORES } = require('./reconciliation-status');
-const { verifiedCorrection,mergeVerifiedCorrection } = require('./verified-correction');
+const { verifiedCorrection,verifiedShipmentCorrection,mergeVerifiedCorrection } = require('./verified-correction');
 const { retryRetailLines,mergeRetailPostings,confirmedPosting,confirmedBackorder } = require('./retail-conversion-retry');
 const { receiptOrders,receiptForOrder } = require('./receipt-orders');
 const RELEASE='receiving-auto-2026-10-13-v1';
@@ -45,12 +45,31 @@ function createReconciliationWorker({loadReports,saveReports,request,readProof,n
       return;
     }
     update(report.id,r=>{r.automation.status='processing';r.automation.attempts++;r.automation.lastAttemptAt=new Date(now()).toISOString();});
-    const food=(report.items||[]).some(i=>i.receivingCategory==='food'&&i.orderDiff!==0)||(report.extraItems||[]).length;
+    const food=(report.items||[]).some(i=>i.receivingCategory==='food'&&
+      (i.orderDiff!==0 || (report.foodShipmentKey && i.expectedFromPicking!==i.orderedQty)))||(report.extraItems||[]).length;
     if(food) {
       try {
-        const response=await request('/api/automatic-receiving-correction',{report});
+        const endpoint=report.foodShipmentKey?'/api/verified-food-receiving-correction':'/api/automatic-receiving-correction';
+        const response=await request(endpoint,{report});
         for(const result of response.results||[]) {
-          if(result.status==='posted') {
+          if(report.foodShipmentKey && result.kind==='food' && ['posted','matched'].includes(result.status)) {
+            try {
+              const proof=await request('/api/verified-food-receiving-proof',{
+                report,sku:result.sku,orderId:result.orderId,groupId:result.adjustmentId
+              });
+              update(report.id,current=>{
+                const scoped=receiptForOrder(current,result.orderId);
+                const correction=verifiedShipmentCorrection(scoped,result.sku,proof,result.adjustmentId);
+                correction.sourceOrderId=scoped.orderId;
+                correction.orderId=current.orderId;
+                if (correction.status==='matched') {
+                  current.foodShipmentMatches=[...(current.foodShipmentMatches||[])
+                    .filter(match=>match.discrepancyKey!==correction.discrepancyKey),correction];
+                } else mergeVerifiedCorrection(current,correction);
+              });
+              results.push({...result,shopifyVerified:true});
+            } catch(e) { retry=true;results.push({...result,status:'retry',error:`Shipment credit or correction awaiting verification: ${e.message}`}); }
+          } else if(result.status==='posted') {
             try {
               const scoped=receiptForOrder(report,result.orderId||report.orderId);
               const proof=await readProof(result.adjustmentId,scoped.orderId,result.variantId);
@@ -95,7 +114,7 @@ function createReconciliationWorker({loadReports,saveReports,request,readProof,n
     update(report.id,r=>{
       const expired=now()-Date.parse(r.submittedAt)>24*60*60*1000;
       r.automation.results=results;
-      r.automation.status=retry&&!expired?'retry':results.some(x=>x.status!=='posted')?'requires_review':'complete';
+      r.automation.status=retry&&!expired?'retry':results.some(x=>!['posted','matched'].includes(x.status))?'requires_review':'complete';
       r.automation.error=expired&&retry?'Automatic retries reached 24 hours; review required':null;
       r.automation.nextAttemptAt=now()+Math.min(300000,15000*2**Math.min(r.automation.attempts,5));
       r.automation.updatedAt=new Date(now()).toISOString();

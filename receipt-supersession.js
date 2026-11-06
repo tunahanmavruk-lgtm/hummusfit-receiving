@@ -7,6 +7,7 @@ function supersedeEarlierReports(reports,reportId,physicalCounts,manager) {
   if(related.some(r=>Date.parse(r.submittedAt)>Date.parse(latest.submittedAt))) throw new Error('A newer receipt exists');
   const changed=new Set();
   for(const prior of related.filter(r=>r.id!==latest.id)) {
+    if (prior.foodShipmentKey || latest.foodShipmentKey) throw new Error('Shipment receipts require reconciliation against their original store credit');
     if(prior.extraItems?.length || latest.extraItems?.length || prior.items.length!==latest.items.length) throw new Error('Receipt contents require separate review');
     for(const item of prior.items) {
       const receiptOnly=!item.sku && item.receivingCategory==='other_essentials' && item.title;

@@ -41,6 +41,7 @@ function discrepancyEntries(report) {
   const extras = Array.isArray(report.extraItems) ? report.extraItems : [];
   return [
     ...items.flatMap((item, index) => Number(item.diff) !== 0 ||
+      (report.foodShipmentKey && item.receivingCategory==='food' && item.expectedFromPicking!==item.orderedQty) ||
       (POS_STORES.has(report.store) && item.orderDiff !== null && item.orderDiff !== undefined && Number(item.orderDiff) !== 0)
       ? [{ key: `item:${index}`, title: item.title || item.sku || "Item", sku: item.sku || "", diff: Number(item.diff), orderDiff: item.orderDiff, kind: "ordered_item", category: item.receivingCategory }]
       : []),
@@ -66,7 +67,11 @@ function confirmedCorrection(report, discrepancy, correction) {
   if (discrepancy.kind === "extra_item" &&
       (correction.catalogVerified !== true || correction.delta !== discrepancy.diff ||
        (discrepancy.sku && correction.sku !== discrepancy.sku))) return false;
-  if (discrepancy.kind === "ordered_item" &&
+  const shipmentFood=report.foodShipmentKey && discrepancy.category==='food';
+  if (shipmentFood) {
+    const item=report.items[Number(discrepancy.key.split(':')[1])];
+    if (!matchesFoodBasis(report,item,correction)) return false;
+  } else if (discrepancy.kind === "ordered_item" &&
       (discrepancy.category === "other_essentials" || correction.sku !== discrepancy.sku ||
        !Number.isSafeInteger(Number(discrepancy.orderDiff)) ||
        (correction.delta !== Number(discrepancy.orderDiff) &&
@@ -76,6 +81,25 @@ function confirmedCorrection(report, discrepancy, correction) {
   // Shopify adjustment timestamps have second precision; receipt timestamps
   // retain milliseconds. Exact order/item/location/delta checks above still apply.
   return Number.isFinite(submitted) && Number.isFinite(posted) && posted >= Math.floor(submitted / 1000) * 1000;
+}
+
+function matchesFoodBasis(report,item,record) {
+  const basis=record?.foodShipmentBasis;
+  return Boolean(basis && basis.shipmentKey===report.foodShipmentKey && record.reportId===report.id &&
+    record.orderId===report.orderId && record.store===report.store && record.sku===item?.sku &&
+    record.shopifyVerified===true && basis.credited===item.expectedFromPicking &&
+    basis.shipped===item.expectedFromPicking && basis.received===item.actuallyReceived &&
+    basis.ordered===item.orderedQty && record.delta===item.actuallyReceived-basis.credited);
+}
+
+function warehouseReviewLines(report) {
+  if (!report.foodShipmentKey || report.supersededBy) return [];
+  return (report.items||[]).flatMap((item,index)=>{
+    if (item.receivingCategory!=='food' || item.actuallyReceived>=item.expectedFromPicking) return [];
+    return [{lineId:`item:${index}`,sku:item.sku,title:item.title,shipmentKey:report.foodShipmentKey,
+      quantity:item.expectedFromPicking-item.actuallyReceived,status:'manager_review',
+      reason:'Confirm physical retention or return and verify the original warehouse debit and any prior restoration.'}];
+  });
 }
 
 // Legacy case shortages were reversed on the sell-unit inventory item after
@@ -113,9 +137,13 @@ function reconciliationStatus(report) {
   const correctionLines = discrepancies.map((entry) => {
     const item=entry.key.startsWith('item:')?items[Number(entry.key.split(':')[1])]:null;
     const backordered=item&&(report.posInventoryResults||[]).some(r=>require('./retail-conversion-retry').confirmedBackorder(report,item,r));
+    const matchedFood=report.foodShipmentKey && item?.receivingCategory==='food' &&
+      (report.foodShipmentMatches||[]).find(m=>m.discrepancyKey===entry.key&&m.status==='matched'&&m.delta===0&&matchesFoodBasis(report,item,m));
     const correction = corrections.find((candidate) => confirmedCorrection(report, entry, candidate));
     const manual = existingManualCorrection(report, entry.key);
-    return { ...entry, status: backordered?'backordered':entry.category === 'other_essentials' ? 'receipt_only' : correction || manual ? "corrected" : "pending",
+    const basis=correction?.foodShipmentBasis || matchedFood?.foodShipmentBasis;
+    return { ...entry, status: backordered||matchedFood?'backordered':entry.category === 'other_essentials' ? 'receipt_only' : correction || manual ? "corrected" : "pending",
+      ...(basis ? {shippedQty:basis.shipped,creditedQty:basis.credited,backorderedQty:basis.ordered-basis.shipped} : {}),
       adjustmentId: correction?.adjustmentId || null,
       postedAt: correction?.postedAt || manual?.evidence?.postedAtMinute || null,
       locationId: correction?.locationId || manual?.locationId || null,
@@ -125,7 +153,7 @@ function reconciliationStatus(report) {
   const correctedCount = correctionLines.filter((entry) => entry.status === "corrected").length;
   const pendingCount = correctionLines.filter((entry) => entry.status === 'pending').length;
   const receiptExceptionCount = correctionLines.filter((entry) => entry.status === 'receipt_only').length;
-  const backorderCount=correctionLines.filter(entry=>entry.status==='backordered').length;
+  const backorderCount=correctionLines.filter(entry=>entry.status==='backordered'||entry.backorderedQty>0).length;
   const retail = items.filter((item) => item.receivingCategory === "retail_essentials");
   const postedResults = results.filter((result) => ["posted", "already_posted"].includes(result.status));
   const postedUnits = postedResults.reduce((sum, result) => sum + (Number(result.units) || 0), 0);
@@ -143,7 +171,7 @@ function reconciliationStatus(report) {
     return { status,
       label: status==='received_with_backorder'?'Received items complete — backorder remains':status === 'receipt_exception' ? 'Supply exception — logistics follow-up' : status === "corrected" ? `Solved by ${AGENT_LABEL}` :
         status === "partially_corrected" ? `Partially corrected by ${AGENT_LABEL}` : "Inventory correction not confirmed",
-      detail: (backorderCount?`${backorderCount} unshipped line(s) remain on backorder; no inventory credit or shortage reversal was made for them. `:'')+(pendingCount === 0 ? (correctedCount ? "Every delivered-item inventory discrepancy has a confirmed Shopify adjustment at this store." + (correctionLines.some(c=>c.resolution==='verified_existing_manual') ? " Existing manual correction verified by Agent Hazar; no inventory was posted again." : '') : "No further POS inventory correction is required for this receipt.") :
+      detail: (backorderCount?`${backorderCount} line(s) have unshipped quantities on backorder. `:'')+(pendingCount === 0 ? (correctedCount ? "Every delivered-item inventory discrepancy has a confirmed Shopify adjustment at this store." + (correctionLines.some(c=>c.resolution==='verified_existing_manual') ? " Existing manual correction verified by Agent Hazar; no inventory was posted again." : '') : "No further POS inventory correction is required for this receipt.") :
         `${pendingCount} discrepant line${pendingCount === 1 ? "" : "s"} still need${pendingCount === 1 ? "s" : ""} a confirmed Shopify adjustment. ` +
         (['queued','processing','retry'].includes(report.automation?.status) ? 'Agent Hazar is processing or safely retrying this saved receipt.' :
           (report.automation?.error || report.automation?.results?.filter(r=>r.status!=='posted').map(r=>r.error).filter(Boolean).join('; ') || 'Logistics review is required; no unverified inventory change is marked solved.'))) +
@@ -171,4 +199,4 @@ function reconciliationStatus(report) {
   };
 }
 
-module.exports = { reconciliationStatus, discrepancyEntries, confirmedCorrection, POS_STORES, AGENT_LABEL };
+module.exports = { reconciliationStatus, discrepancyEntries, confirmedCorrection, warehouseReviewLines, POS_STORES, AGENT_LABEL };

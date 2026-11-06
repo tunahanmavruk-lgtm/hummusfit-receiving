@@ -7,7 +7,8 @@
   function canonical(value){ return String(value || '').split(',').map(function(s){return s.trim();}).sort().join(','); }
   function key(store, order){ return 'hf-receiving-draft-v1:' + encodeURIComponent(store) + ':' + encodeURIComponent(canonical(order)); }
   function signature(expected){
-    return JSON.stringify((expected.items || []).map(function(i){return [i.sku || i.title,i.expectedQty,i.pickedQty,i.status];}).sort(function(a,b){return JSON.stringify(a).localeCompare(JSON.stringify(b));}));
+    var items=(expected.items || []).map(function(i){return [i.sku || i.title,i.expectedQty,i.pickedQty,i.status];}).sort(function(a,b){return JSON.stringify(a).localeCompare(JSON.stringify(b));});
+    return JSON.stringify([expected.foodShipmentKey||null,items]);
   }
   function rebase(draft,current){
     if(draft.pending || canonical(draft.expected.orderId)!==canonical(current.orderId))return {reviewRequired:true};
@@ -20,7 +21,8 @@
       if(prior.sku!==item.sku)return {reviewRequired:true};
       var hasCount=Object.prototype.hasOwnProperty.call(result.scannedCounts||{},id),count=hasCount?result.scannedCounts[id]:0;
       if(!Number.isSafeInteger(count)||count<0||count>100000||(item.status==='missing'&&count>0))return {reviewRequired:true};
-      if(prior.expectedQty!==item.expectedQty||prior.pickedQty!==item.pickedQty||prior.title!==item.title||!hasCount){result.resolvedKeys[id]=false;changed.push(id);}
+      if(prior.expectedQty!==item.expectedQty||prior.pickedQty!==item.pickedQty||prior.title!==item.title||
+          draft.expected.foodShipmentKey!==current.foodShipmentKey||!hasCount){result.resolvedKeys[id]=false;changed.push(id);}
     }
     result.expected=JSON.parse(JSON.stringify(current));return {draft:result,changedKeys:changed,reviewRequired:false};
   }

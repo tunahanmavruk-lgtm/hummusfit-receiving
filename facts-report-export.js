@@ -1,4 +1,5 @@
 const {createHash}=require('node:crypto');
+const {warehouseReviewLines}=require('./reconciliation-status');
 const canonical=x=>Array.isArray(x)?x.map(canonical):x&&typeof x==='object'?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
 const fingerprint=x=>createHash('sha256').update(JSON.stringify(canonical(x))).digest('hex');
 const STORES = new Set(['Bellmore','Deer Park','Islip','Farmingdale','Holbrook','Huntington','Island Park','Lake Grove','Lindenhurst','Lynbrook','Miller Place','Ronkonkoma','Selden','Woodbury']);
@@ -12,6 +13,8 @@ const nullable = value => value ?? null;
 function project(record, kind) {
   return {id:record.id,store:record.store,kind,orderId:record.orderId,orderName:nullable(record.orderName),
     submittedAt:nullable(record.submittedAt),supersededBy:nullable(record.supersededBy),
+    foodShipmentKey:nullable(record.foodShipmentKey),shipmentVerifiedAt:nullable(record.shipmentVerifiedAt),
+    warehouseReview:warehouseReviewLines(record),
     status:kind === 'line_receipt' ? record.status : record.inventoryReconciliation?.status ?? record.automation?.status ?? 'unknown',
     lines:kind === 'line_receipt' ? (record.lines || []).map((line,i)=>({lineId:`line:${i}`,sku:nullable(line.sku),title:null,
       received:nullable(line.receivedCases),unit:'cases',ordered:null,picked:null,unitsPerCase:null,category:'retail_essentials'})) :
@@ -21,9 +24,11 @@ function project(record, kind) {
       ...(record.extraItems || []).map((line,i)=>({lineId:`extra:${i}`,sku:line.catalogVerified===true?nullable(line.sku):null,
         title:line.catalogVerified===true?nullable(line.title):null,code:nullable(line.code),received:nullable(line.qty),unit:null,
         ordered:null,picked:null,unitsPerCase:null,category:null}))],
-    recordedPostingReferences:(record.inventoryCorrections || record.results || []).map(entry=>({
+    recordedPostingReferences:[...(record.inventoryCorrections || record.results || []),
+      ...(record.foodShipmentMatches||[]),...(record.posInventoryResults||[])].map(entry=>({
       adjustmentId:nullable(entry.adjustmentId),caseCreditAdjustmentId:nullable(entry.caseCreditAdjustmentId),
-      sku:nullable(entry.sku),delta:nullable(entry.delta),status:nullable(entry.status)})),
+      sku:nullable(entry.sku),delta:nullable(entry.delta),status:nullable(entry.status),
+      sourceOrderId:nullable(entry.sourceOrderId),foodShipmentBasis:nullable(entry.foodShipmentBasis)})),
     inventoryAuthorization:false,correctionRetriesAllowed:false,liveShopifyProof:false,
     limitations:['Recorded report data only; posting references are not fresh Shopify proof.','Missing fields and omitted lines remain unknown.']};
 }
