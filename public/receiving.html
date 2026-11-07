@@ -563,7 +563,34 @@
           return;
         }
         if(!result.data.orderId)return;
+        // A scan or submission may have started while the request was in flight.
+        if(submissionInFlight||pendingLookupCount)return;
         if(expected&&progress.canonical(expected.orderId)===progress.canonical(result.data.orderId)){
+          if(progressEnabled&&progress.signature(expected)!==progress.signature(result.data)){
+            notice.hidden=false;document.getElementById('mainContent').hidden=false;
+            if(finishedReport||completedReportId){
+              notice.textContent='Delivery contents changed after this receipt was saved. Your saved receipt is unchanged. Contact logistics to review the updated delivery.';return;
+            }
+            if(pendingSubmission){
+              notice.textContent='Delivery contents changed while your receipt awaits confirmation. Your original counts and saved receipt are preserved. Retry / confirm that receipt before reviewing the updated delivery with logistics.';return;
+            }
+            // Force the storage conflict check even when the local snapshot is
+            // unchanged. Never read over a newer draft from another tab.
+            lastDraftState='';
+            if(!saveProgress()){
+              notice.textContent=draftProblem||'Delivery contents changed. Keep this page open and contact logistics to preserve your draft.';return;
+            }
+            var hasCounts=Object.keys(scannedCounts).length||Object.keys(resolvedKeys).length||Object.keys(extraScans).length||Object.keys(extraDetails).length||receivedByValue.trim()||draftMismatch||receiptConflict;
+            if(hasCounts){
+              confirmFinish=false;closeScanner();draftMismatch=true;
+              submissionError='The delivery contents changed. Your original counts are preserved. Contact logistics to review the updated items before submitting.';
+              notice.textContent=submissionError;render();return;
+            }
+            // Only an untouched form can adopt added/removed items automatically.
+            expected=result.data;confirmFinish=false;
+            submissionError='Delivery contents updated. Please check every item in the updated list.';
+            notice.textContent=submissionError;render();return;
+          }
           if(restoredPage&&finishedReport){openFreshReceiving();return;}
           notice.hidden=true;document.getElementById('mainContent').hidden=false;return;
         }
