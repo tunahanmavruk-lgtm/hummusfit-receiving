@@ -14,6 +14,8 @@ const { RELEASE: AUTOMATION_RELEASE, queueReport, retryReport, createReconciliat
 const { orderIds, canonicalOrder, submissionIdentity, findSubmission, createSubmissionLock } = require('./receipt-submission');
 const withSubmissionLock = createSubmissionLock();
 const { verifiedDelivery, requireVerifiedExtras } = require('./structured-receipt');
+const { createRouteBoardReadCache } = require('./route-board-read-cache');
+const { routeBoardFetch, ROUTE_BOARD_URL } = require('./route-board-fetch');
 const FOOD_SHIPMENT_VERSION = 'verified-food-shipment-v1';
 const receivingShipmentHeaders = {'X-HF-Receiving-Food-Shipment':FOOD_SHIPMENT_VERSION};
 const foodShipmentPilotArmed = process.env.FOOD_SHIPMENT_PILOT === 'Huntington';
@@ -153,8 +155,7 @@ app.get("/api/admin-session", (req, res) => {
 // inventory. Receiving reads the pick summary and, after a store confirms
 // physical cases, sends a short-lived signed receipt to the isolated POS
 // conversion endpoint. This service never holds Shopify credentials.
-const ROUTE_BOARD_URL =
-  process.env.ROUTE_BOARD_URL || "https://hummusfit-route-board-production.up.railway.app";
+const readRouteBoard = createRouteBoardReadCache(routeBoardFetch);
 
 // Pulled directly from Route Board's real local store list, so this
 // never drifts out of sync with the actual stops. If a store shouldn't
@@ -227,12 +228,16 @@ app.get("/api/expected/:store", requireStoreAccess, async (req, res) => {
   res.set("Cache-Control", "private, no-store");
   const store = req.params.store;
   try {
-    const r = await fetch(`${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`,{headers:receivingShipmentHeaders});
-    const rawText = await r.text();
+    const r = await readRouteBoard(`picked:${store}`, `${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`, { headers: receivingShipmentHeaders }, 30000);
+    const rawText = r.text;
     let data;
     try {
       data = JSON.parse(rawText);
     } catch (parseErr) {
+      if (r.status === 429) {
+        res.set('Retry-After', '30');
+        return res.status(503).json({ code: 'route_board_rate_limited', error: 'Delivery connection is busy. This page will retry automatically.' });
+      }
       // Route Board sent back something that isn't JSON at all — most
       // likely means the request never reached our actual endpoint
       // (a 404/500 HTML page, a redirect, etc). Surface exactly what
@@ -257,8 +262,8 @@ app.get("/api/expected/:store", requireStoreAccess, async (req, res) => {
 app.get("/api/eta/:store", requireStoreAccess, async (req, res) => {
   const store = req.params.store;
   try {
-    const upstream = await fetch(`${ROUTE_BOARD_URL}/api/store-eta/${encodeURIComponent(store)}`);
-    const data = await upstream.json();
+    const upstream = await readRouteBoard(`eta:${store}`, `${ROUTE_BOARD_URL}/api/store-eta/${encodeURIComponent(store)}`, {}, 60000);
+    const data = JSON.parse(upstream.text);
     if (!upstream.ok) return res.status(upstream.status).json({ error: data.error || "Delivery status unavailable" });
     const fleetTrackerUrl = data.fleetTrackerUrl;
     const vanImei = data.vanImei;
@@ -299,7 +304,7 @@ app.post("/api/lookup-received-barcode", requireStoreAccess, async (req, res) =>
   const token = signPosReceiptToken();
   if (!token) return res.status(503).json({ error: "Secure barcode lookup is unavailable" });
   try {
-    const response = await fetch(`${ROUTE_BOARD_URL}/api/receiving-barcode-lookup`, {
+    const response = await routeBoardFetch(`${ROUTE_BOARD_URL}/api/receiving-barcode-lookup`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ store, code }),
@@ -359,7 +364,7 @@ async function submitReceipt(req, res) {
       return res.json({ok:true,replayed:true,report:{...previous.report,inventoryReconciliation:reconciliationStatus(previous.report)}});
     }
     try {
-      const upstream = await fetch(`${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`, {
+      const upstream = await routeBoardFetch(`${ROUTE_BOARD_URL}/api/picked-summary/${encodeURIComponent(store)}`, {
         headers:receivingShipmentHeaders,signal:AbortSignal.timeout(10000)
       });
       if (!upstream.ok) throw new Error('Delivery verification unavailable');
@@ -418,7 +423,7 @@ async function submitReceipt(req, res) {
     extraItems = await verifyExtraLines(submittedExtras, async (code) => {
       const token = signPosReceiptToken();
       if (!token) throw new Error("Catalog lookup is unavailable");
-      const response = await fetch(`${ROUTE_BOARD_URL}/api/receiving-barcode-lookup`, {
+      const response = await routeBoardFetch(`${ROUTE_BOARD_URL}/api/receiving-barcode-lookup`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ store, code }),
@@ -481,7 +486,7 @@ async function submitReceipt(req, res) {
           const key = receiptCountKey(item);
           return [key, Number(scannedCounts[key]) || 0];
         }));
-        const response = await fetch(`${ROUTE_BOARD_URL}/api/essentials-pos-receipt`, {
+        const response = await routeBoardFetch(`${ROUTE_BOARD_URL}/api/essentials-pos-receipt`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
           body: JSON.stringify({ store, orderId, receivedCounts }),
@@ -552,7 +557,7 @@ app.post("/api/retry-retail-conversion", requireReportsManager, async (req, res)
   const token = signPosReceiptToken();
   if (!token) return res.status(503).json({ error: "Secure POS receipt is unavailable" });
   try {
-    const response = await fetch(`${ROUTE_BOARD_URL}/api/essentials-pos-receipt`, {
+    const response = await routeBoardFetch(`${ROUTE_BOARD_URL}/api/essentials-pos-receipt`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({
@@ -760,7 +765,7 @@ const receivingWorker=createReconciliationWorker({
     if(process.env.RAILWAY_ENVIRONMENT_ID && !fs.existsSync('/data')) throw new Error('Persistent receiving volume is unavailable');
     const token=signPosReceiptToken();
     if(!token) throw new Error('Secure receiving service access is unavailable');
-    const response=await fetch(`${ROUTE_BOARD_URL}${endpoint}`,{
+    const response=await routeBoardFetch(`${ROUTE_BOARD_URL}${endpoint}`,{
       method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
       body:JSON.stringify(body),signal:AbortSignal.timeout(60000),
     });

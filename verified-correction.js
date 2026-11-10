@@ -144,7 +144,7 @@ async function readCorrectionProof(groupId, orderId, variantId) {
   const payload=Buffer.from(JSON.stringify({sub:'hummusfit-receiving',scope:['essentials.receive'],exp:Math.floor(Date.now()/1000)+60})).toString('base64url');
   const token=payload+'.'+crypto.createHmac('sha256',secret).update(payload).digest('base64url');
   const base=process.env.ROUTE_BOARD_URL || 'https://hummusfit-route-board-production.up.railway.app';
-  const response=await fetch(`${base}/api/receiving-adjustment-proof`,{
+  const response=await require('./route-board-fetch').routeBoardFetch(`${base}/api/receiving-adjustment-proof`,{
     method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
     body:JSON.stringify({groupId,orderId,variantId}),signal:AbortSignal.timeout(20000),
   });
