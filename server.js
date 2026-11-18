@@ -25,7 +25,8 @@ function supportsFoodShipment(store, delivery) {
 }
 
 const app = express();
-app.use(express.json());
+// Saved receipt drafts include catalog metadata; large deliveries exceed 100 KB.
+app.use(express.json({ limit: '2mb' }));
 const PORT = process.env.PORT || 3000;
 const HF_LOGISTICS_HANDOFF_SECRET = process.env.HF_LOGISTICS_HANDOFF_SECRET || "";
 const STORE_TRACKING_SECRET = process.env.STORE_TRACKING_SECRET || "";

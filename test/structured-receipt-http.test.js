@@ -83,4 +83,32 @@ test('server rejects unstructured, fabricated and unverified receipts before sav
   assert.equal(savedPilot.items[0].actuallyReceived,0);
   assert.equal((await (await post(pilot)).json()).report.id,savedPilot.id);
   assert.equal(writes,0);
+
+  // Large deliveries carry catalog metadata in existing saved browser drafts.
+  // They must pass the JSON parser without changing that immutable retry body.
+  delivery.orderId='gid://shopify/Order/125,gid://shopify/Order/126';
+  delivery.orderName='#125, #126';
+  delete delivery.foodShipmentKey;
+  delete delivery.shipmentVerifiedAt;
+  delivery.items=Array.from({length:89},(_,i)=>({
+    sku:`ITEM-${i}`,title:`Delivery item ${i}`,expectedQty:2,
+    pickedQty:i===88?0:2,status:i===88?'missing':'picked',
+    productCollections:[{title:'Catalog metadata '.repeat(80)}]
+  }));
+  const large=body();
+  large.scannedCounts=Object.fromEntries(delivery.items.map(i=>[i.sku,i.pickedQty]));
+  const serialized=JSON.stringify(large);
+  assert.ok(Buffer.byteLength(serialized)>100*1024,'regression exceeds Express default body limit');
+  const largeResponse=await post(large);
+  const largeResult=await largeResponse.json();
+  assert.equal(largeResponse.status,200,JSON.stringify(largeResult));
+  const largeReport=largeResult.report;
+  assert.equal(largeReport.items.length,89);
+  assert.equal(largeReport.items[88].actuallyReceived,0);
+  unavailable=true;
+  const largeReplay=await post(JSON.parse(serialized));
+  assert.equal(largeReplay.status,200);
+  assert.equal((await largeReplay.json()).report.id,largeReport.id);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(tmp,'reports.json'))).length,3);
+  assert.equal(writes,0,'isolated receipt tests never write inventory');
 });
